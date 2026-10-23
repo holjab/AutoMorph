@@ -524,6 +524,61 @@
           </div>
         </div>
 
+        <!-- ntfy Push Notifications -->
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 24px; margin-top: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span class="material-symbols-rounded" style="color: #a78bfa; font-size: 22px;">notifications_active</span>
+              <h3 style="font-size: 1.125rem; font-family: var(--font-display); font-weight: 600;">ntfy Push Notifications</h3>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span id="ntfy-status-badge" class="badge badge-neutral">Disabled</span>
+              <span class="badge badge-neutral" style="font-size: 0.75rem;">config.yaml / NTFY_*</span>
+            </div>
+          </div>
+
+          <!-- ntfy Quick Info Grid -->
+          <div class="info-grid" style="margin-bottom: 20px;">
+            <div style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Server</div>
+              <div id="ntfy-card-server" style="font-size: 0.9375rem; font-weight: 600; margin-top: 4px; font-family: var(--font-mono); color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">ntfy.sh</div>
+            </div>
+
+            <div style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Topic</div>
+              <div id="ntfy-card-topic" style="font-size: 0.9375rem; font-weight: 600; margin-top: 4px; color: var(--primary-cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Not configured</div>
+            </div>
+
+            <div style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Authentication</div>
+              <div id="ntfy-card-auth" style="font-size: 0.9375rem; font-weight: 600; margin-top: 4px; color: var(--text-main);">No auth</div>
+            </div>
+
+            <div style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Delivery</div>
+              <div id="ntfy-card-delivery" style="font-size: 0.9375rem; font-weight: 600; margin-top: 4px; color: var(--text-main);">ALWAYS (priority default)</div>
+            </div>
+          </div>
+
+          <!-- ntfy Action Buttons -->
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+            <p style="font-size: 0.8125rem; color: var(--text-muted); margin: 0;">
+              Push every build summary to your phone: server, topic, token, priority and when to notify.
+            </p>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <span id="ntfy-feedback" style="font-size: 0.8125rem; color: var(--text-muted);"></span>
+              <button id="btn-ntfy-test" class="btn btn-secondary btn-sm" type="button" title="Send a test notification">
+                <span class="material-symbols-rounded">send</span>
+                <span>Send Test Notification</span>
+              </button>
+              <button id="btn-open-ntfy" class="btn btn-primary btn-sm" type="button">
+                <span class="material-symbols-rounded">tune</span>
+                <span>Edit ntfy Settings</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -1682,6 +1737,235 @@
   <div id="toast-container" style="position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 200;"></div>
 
   <!-- Script logic -->
-  <script src="js/app.js?v=3.7"></script>
+  <script src="js/app.js?v=4.0"></script>
+  <!-- Modal: ntfy Push Notifications (Setup Wizard) -->
+  <div id="modal-ntfy" class="modal-backdrop">
+    <div class="modal-card" style="max-width: 760px; max-height: 90vh; display: flex; flex-direction: column;">
+
+      <!-- Modal Header -->
+      <div class="modal-header">
+        <div class="modal-title">
+          <span class="material-symbols-rounded" style="color: #a78bfa;">notifications_active</span>
+          <span>ntfy Push Notification Setup</span>
+        </div>
+        <button id="btn-ntfy-modal-close" class="btn btn-secondary btn-sm btn-icon-only" title="Close" type="button">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+      </div>
+
+      <!-- Wizard Step Indicator Header -->
+      <div class="wizard-steps-header" style="overflow-x: auto; padding: 12px 20px; border-bottom: 1px solid var(--border-subtle);">
+        <div class="step-indicator active" id="ntfy-wiz-ind-1">
+          <span class="step-num">1</span>
+          <span>Server &amp; Topic</span>
+        </div>
+        <span class="material-symbols-rounded" style="font-size: 16px; color: var(--text-dim);">chevron_right</span>
+        <div class="step-indicator" id="ntfy-wiz-ind-2">
+          <span class="step-num">2</span>
+          <span>Delivery &amp; Options</span>
+        </div>
+        <span class="material-symbols-rounded" style="font-size: 16px; color: var(--text-dim);">chevron_right</span>
+        <div class="step-indicator" id="ntfy-wiz-ind-3">
+          <span class="step-num">3</span>
+          <span>Review &amp; Test</span>
+        </div>
+      </div>
+
+      <div style="padding: 20px; overflow-y: auto; flex: 1;">
+
+        <!-- Step 1: Server & Topic -->
+        <div id="ntfy-wiz-step-1" class="wizard-content">
+          <h3 style="font-size: 1.125rem; font-family: var(--font-display); margin-bottom: 6px;">Connect to your ntfy Server</h3>
+          <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 18px;">
+            Pick a public instance or point AutoMorph at your own. The topic is what you subscribe to in the ntfy app.
+          </p>
+
+          <div class="info-grid" style="margin-bottom: 18px;">
+            <button type="button" class="ntfy-preset-btn" data-ntfy-preset="https://ntfy.sh" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); cursor: pointer; text-align: center; color: var(--text-main);">
+              <span class="material-symbols-rounded" style="color: #a78bfa; font-size: 28px;">cloud</span>
+              <span style="font-weight: 600; font-size: 0.875rem;">ntfy.sh</span>
+              <span style="font-size: 0.6875rem; color: var(--text-dim);">Official, free</span>
+            </button>
+            <button type="button" class="ntfy-preset-btn" data-ntfy-preset="https://ntfy.envs.net" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); cursor: pointer; text-align: center; color: var(--text-main);">
+              <span class="material-symbols-rounded" style="color: #34d399; font-size: 28px;">public</span>
+              <span style="font-weight: 600; font-size: 0.875rem;">ntfy.envs.net</span>
+              <span style="font-size: 0.6875rem; color: var(--text-dim);">Community</span>
+            </button>
+            <button type="button" class="ntfy-preset-btn" data-ntfy-preset="https://ntfy.adminforge.de" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); cursor: pointer; text-align: center; color: var(--text-main);">
+              <span class="material-symbols-rounded" style="color: #fbbf24; font-size: 28px;">dns</span>
+              <span style="font-weight: 600; font-size: 0.875rem;">ntfy.adminforge.de</span>
+              <span style="font-size: 0.6875rem; color: var(--text-dim);">Community</span>
+            </button>
+            <button type="button" class="ntfy-preset-btn" data-ntfy-preset="__custom__" style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); cursor: pointer; text-align: center; color: var(--text-main);">
+              <span class="material-symbols-rounded" style="color: #38bdf8; font-size: 28px;">settings_ethernet</span>
+              <span style="font-weight: 600; font-size: 0.875rem;">Custom</span>
+              <span style="font-size: 0.6875rem; color: var(--text-dim);">Own instance</span>
+            </button>
+          </div>
+
+          <div class="settings-grid-3" style="margin-bottom: 18px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-server">Server URL</label>
+              <input id="ntfy-server" class="form-control" list="ntfy-server-presets" placeholder="https://ntfy.sh" />
+              <datalist id="ntfy-server-presets"></datalist>
+              <div class="form-subtext">Base URL, without the topic.</div>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-topic">Topic</label>
+              <input id="ntfy-topic" class="form-control" placeholder="automorph" />
+              <div class="form-subtext">Subscribe to this topic in the ntfy app.</div>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-token">Access Token</label>
+              <input id="ntfy-token" class="form-control" type="password" autocomplete="new-password" placeholder="tk_… (leave empty to keep)" />
+              <div class="form-subtext" id="ntfy-token-hint">No token stored yet.</div>
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; cursor: pointer;">
+                <input type="checkbox" id="ntfy-clear-token">
+                <span>Remove stored token</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-grid-3" style="margin-bottom: 18px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-username">Username (optional)</label>
+              <input id="ntfy-username" class="form-control" placeholder="ntfy user" autocomplete="off" />
+              <div class="form-subtext">Alternative to a token: HTTP Basic auth.</div>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-password">Password (optional)</label>
+              <input id="ntfy-password" class="form-control" type="password" autocomplete="new-password" placeholder="•••••• (leave empty to keep)" />
+              <div class="form-subtext" id="ntfy-password-hint">No password stored yet.</div>
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; cursor: pointer;">
+                <input type="checkbox" id="ntfy-clear-password">
+                <span>Remove stored password</span>
+              </label>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">
+            <div>
+              <div style="font-weight: 600; font-size: 0.875rem;">Enable ntfy notifications</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Send a push message after every pipeline run</div>
+            </div>
+            <label class="switch" style="margin-left: 12px;">
+              <input type="checkbox" id="ntfy-enabled">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 2: Delivery & Options -->
+        <div id="ntfy-wiz-step-2" class="wizard-content hidden">
+          <h3 style="font-size: 1.125rem; font-family: var(--font-display); margin-bottom: 6px;">Delivery &amp; Notification Formatting</h3>
+          <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 18px;">
+            Fine-tune when a push is sent, how urgent it is and where a tap should lead.
+          </p>
+
+          <div class="settings-grid-3" style="margin-bottom: 18px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-priority">Default Priority</label>
+              <select id="ntfy-priority" class="form-control">
+                <option value="min">Min</option>
+                <option value="low">Low</option>
+                <option value="default">Default</option>
+                <option value="high">High</option>
+                <option value="max">Max / Urgent</option>
+              </select>
+              <div class="form-subtext">Failures are always sent with high priority.</div>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-notify-on">Notify On</label>
+              <select id="ntfy-notify-on" class="form-control">
+                <option value="always">Every run</option>
+                <option value="success">Successful runs only</option>
+                <option value="failure">Failed runs only</option>
+              </select>
+              <div class="form-subtext">When AutoMorph should send a notification.</div>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="ntfy-tags">Tags</label>
+              <input id="ntfy-tags" class="form-control" placeholder="robot,package" />
+              <div class="form-subtext">Comma separated; shown as chips in the app.</div>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label" for="ntfy-click-url">Click URL</label>
+            <input id="ntfy-click-url" class="form-control" placeholder="https://patcher.example.com" />
+            <div class="form-subtext">Opened when tapping the notification. Empty = the portal or the built APK.</div>
+          </div>
+        </div>
+
+        <!-- Step 3: Review & Live Test -->
+        <div id="ntfy-wiz-step-3" class="wizard-content hidden">
+          <h3 style="font-size: 1.125rem; font-family: var(--font-display); margin-bottom: 6px;">Review &amp; Verify Push Delivery</h3>
+          <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 18px;">
+            Review your configuration and run a live test notification before saving to <code>config.yaml</code>.
+          </p>
+
+          <div style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 16px; margin-bottom: 18px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 8px 0; color: var(--text-dim); width: 35%;">Status:</td>
+                <td id="ntfy-rev-status" style="padding: 8px 0; font-weight: 600;">Disabled</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 8px 0; color: var(--text-dim);">Server:</td>
+                <td id="ntfy-rev-server" style="padding: 8px 0; font-family: var(--font-mono); font-weight: 600;">https://ntfy.sh</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 8px 0; color: var(--text-dim);">Topic:</td>
+                <td id="ntfy-rev-topic" style="padding: 8px 0; color: var(--primary-cyan); font-weight: 600;">Not configured</td>
+              </tr>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 8px 0; color: var(--text-dim);">Authentication:</td>
+                <td id="ntfy-rev-auth" style="padding: 8px 0;">No auth</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: var(--text-dim);">Delivery &amp; Options:</td>
+                <td id="ntfy-rev-options" style="padding: 8px 0;">EVERY RUN • priority default</td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 16px;">
+            <div style="font-weight: 600; font-size: 0.875rem; margin-bottom: 4px;">Live ntfy Delivery Test</div>
+            <p style="font-size: 0.8125rem; color: var(--text-muted); margin: 0 0 12px 0;">
+              Transmit a test notification with these parameters. Nothing is saved yet.
+            </p>
+            <button id="btn-ntfy-wiz-test" class="btn btn-secondary btn-sm" type="button">
+              <span class="material-symbols-rounded">send</span>
+              <span>Send Test Notification Now</span>
+            </button>
+            <div id="ntfy-wiz-test-feedback" class="hidden" style="padding: 10px 14px; border-radius: var(--radius-sm); font-size: 0.8125rem; line-height: 1.4; margin-top: 12px;"></div>
+          </div>
+        </div>
+
+        <div id="ntfy-modal-feedback" style="font-size: 0.8125rem; color: var(--text-muted); margin-top: 14px;"></div>
+      </div>
+
+      <!-- Modal Navigation Footer -->
+      <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center;">
+        <button id="btn-ntfy-wiz-back" class="btn btn-secondary btn-sm" type="button" disabled>
+          <span class="material-symbols-rounded">arrow_back</span>
+          <span>Back</span>
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-ntfy-cancel" class="btn btn-secondary btn-sm" type="button">Cancel</button>
+          <button id="btn-ntfy-wiz-next" class="btn btn-primary btn-sm" type="button">
+            <span>Next</span>
+            <span class="material-symbols-rounded">arrow_forward</span>
+          </button>
+          <button id="btn-ntfy-save" class="btn btn-primary btn-sm hidden" type="button">
+            <span class="material-symbols-rounded">save</span>
+            <span>Save &amp; Apply Settings</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
 </body>
 </html>

@@ -125,6 +125,25 @@ class TestEmailRequest(BaseModel):
     recipient: str | None = None
 
 
+class NtfySettingsRequest(BaseModel):
+    enabled: bool | None = None
+    server: str | None = None
+    topic: str | None = None
+    token: str | None = None
+    username: str | None = None
+    password: str | None = None
+    clear_token: bool | None = None
+    clear_password: bool | None = None
+    priority: str | None = None
+    tags: str | None = None
+    click_url: str | None = None
+    notify_on: str | None = None
+
+
+class TestNtfyRequest(BaseModel):
+    ntfy_config: dict[str, Any] | None = None
+
+
 def format_bytes(bytes_count: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if bytes_count < 1024.0:
@@ -519,6 +538,46 @@ async def test_email(req: TestEmailRequest | None = None) -> dict[str, Any]:
         return res
     except Exception as e:
         logger.error(f"Error sending test email: {e}", exc_info=True)
+        return JSONResponse(status_code=400, content={"success": False, "error": str(e)})
+
+
+@app.get("/api/settings/ntfy/presets")
+async def get_ntfy_presets() -> dict[str, Any]:
+    """Public ntfy instances offered as presets; custom servers are always allowed."""
+    import sys
+
+    scripts_dir = str(PROJECT_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import ntfy_notify
+
+        return {"presets": ntfy_notify.SERVER_PRESETS}
+    except Exception as e:
+        logger.error(f"Error loading ntfy presets: {e}", exc_info=True)
+        return {"presets": [{"url": "https://ntfy.sh", "label": "ntfy.sh (official, free)"}]}
+
+
+@app.post("/api/settings/ntfy")
+async def update_ntfy_settings(req: NtfySettingsRequest) -> dict[str, Any]:
+    try:
+        updated = config_manager.update_ntfy_settings(req.dict(exclude_unset=True))
+        return {"status": "success", "ntfy": updated}
+    except Exception as e:
+        logger.error(f"Error updating ntfy settings: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/settings/ntfy/test")
+async def test_ntfy(req: TestNtfyRequest | None = None) -> Any:
+    try:
+        cfg = req.ntfy_config if req else None
+        res = config_manager.send_test_ntfy(override=cfg)
+        if not res.get("success"):
+            return JSONResponse(status_code=400, content=res)
+        return res
+    except Exception as e:
+        logger.error(f"Error sending ntfy test notification: {e}", exc_info=True)
         return JSONResponse(status_code=400, content={"success": False, "error": str(e)})
 
 

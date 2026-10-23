@@ -7,7 +7,7 @@
 
 - **Automated repo tracking:** Monitors patch repositories for updates.
 - **Automatic APK downloads:** Downloads base APKs automatically, prioritising Google Play and falling back to APKCombo, Uptodown, and APKPure.
-- **Email notifications and web portal:** Get email alerts with direct download links whenever a patch succeeds, or download builds directly from the web portal. *A dedicated Android app for notifications and downloads is planned.*
+- **Notifications and web portal:** Get email or [ntfy](https://ntfy.sh) alerts with direct download links whenever a patch succeeds, or download builds from the web portal. The two channels are independent, so you can use either. *A dedicated Android app for notifications and downloads is planned.*
 - **Scheduled or manual builds:** Run automatically once a day at a time of your choice, or start a build manually through the web interface.
 - **Free hosting:** Designed to run within the free tier of Oracle Cloud Infrastructure.
   - Works with free **Pangolin tunnels** or **Tailscale Funnel** for a URL to access the web portal and downloads.
@@ -31,7 +31,7 @@ For full step-by-step guides, visit our **[Documentation Hub](docs/README.md)**:
 
 * ☁️ **[Oracle Free Tier Setup Guide (Optional)](docs/oracle-setup.md)**: Optional guide to launch a free VPS on Oracle Cloud (skip if you already have your own server!).
 * 🚇 **[Remote Access & Tunnels Guide](docs/tunnels.md)**: Expose your portal securely with free HTTPS via Pangolin, Tailscale Funnel, or Cloudflare Tunnels.
-* 📖 **[User Guide & Web Interface](docs/user-guide.md)**: Managing packages, customizing patch options, daily schedules, and email notifications.
+* 📖 **[User Guide & Web Interface](docs/user-guide.md)**: Managing packages, customizing patch options, daily schedules, and email/ntfy notifications.
 
 ## Prerequisites
 

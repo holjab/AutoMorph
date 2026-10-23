@@ -63,6 +63,10 @@ const state = {
   emailWizard: {
     step: 1,
     recipients: [],
+  },
+
+  ntfyWizard: {
+    step: 1,
   }
 };
 
@@ -440,6 +444,27 @@ function setupEventListeners() {
   // Settings Tab Actions
   document.getElementById('btn-reload-settings')?.addEventListener('click', () => loadSettings(true));
   document.getElementById('btn-save-system-settings')?.addEventListener('click', saveSystemSettings);
+  document.getElementById('btn-ntfy-save')?.addEventListener('click', saveNtfySettings);
+  document.getElementById('btn-ntfy-test')?.addEventListener('click', () => sendTestNtfy('btn-ntfy-test'));
+  document.getElementById('btn-ntfy-wiz-test')?.addEventListener('click', () => sendTestNtfy('btn-ntfy-wiz-test'));
+  document.getElementById('btn-open-ntfy')?.addEventListener('click', openNtfyModal);
+  document.getElementById('btn-ntfy-modal-close')?.addEventListener('click', closeNtfyModal);
+  document.getElementById('btn-ntfy-cancel')?.addEventListener('click', closeNtfyModal);
+  document.getElementById('btn-ntfy-wiz-next')?.addEventListener('click', ntfyWizNext);
+  document.getElementById('btn-ntfy-wiz-back')?.addEventListener('click', ntfyWizPrev);
+  document.querySelectorAll('.ntfy-preset-btn').forEach((btn) => {
+    btn.addEventListener('click', () => applyNtfyPreset(btn.dataset.ntfyPreset || ''));
+  });
+  document.querySelectorAll('#modal-ntfy .step-indicator').forEach((ind, idx) => {
+    ind.addEventListener('click', () => {
+      state.ntfyWizard.step = idx + 1;
+      renderNtfyWizardStep();
+    });
+  });
+  document.getElementById('modal-ntfy')?.addEventListener('click', (e) => {
+    if (e.target.id === 'modal-ntfy') closeNtfyModal();
+  });
+  loadNtfyPresets();
   document.getElementById('btn-email-test-quick')?.addEventListener('click', sendQuickTestEmail);
 
   const chkMaxOrig = document.getElementById('setting-max-original-enable');
@@ -1920,6 +1945,309 @@ function renderSettings(settings) {
   if (elLayout) {
     const lMode = (email.layout_mode || 'auto').toUpperCase();
     elLayout.textContent = `${lMode} (threshold: ${email.compact_threshold || 15})`;
+  }
+
+  // 3. ntfy Push Notifications Card
+  renderNtfySettings(settings.ntfy || {});
+}
+
+function ntfyAuthLabel(source) {
+  const s = source || {};
+  const conf = state.settings?.ntfy || {};
+  const authMode = s.auth_mode || conf.auth_mode;
+  const fromEnv = s.auth_from_env !== undefined ? s.auth_from_env : conf.auth_from_env;
+  // The token itself never reaches the browser, only whether one is stored.
+  const tokenSet = s.token ? true : (s.token_set !== undefined ? s.token_set : conf.token_set);
+  if (tokenSet) return fromEnv ? 'Bearer token (from .env)' : 'Bearer token (stored)';
+  if (s.username) return `Basic (${s.username})`;
+  if (authMode === 'basic') return fromEnv ? 'Basic auth (from .env)' : 'Basic auth';
+  return 'No auth';
+}
+
+function renderNtfySettings(ntfy) {
+  const badge = document.getElementById('ntfy-status-badge');
+  if (badge) {
+    badge.textContent = ntfy.enabled ? 'Enabled' : 'Disabled';
+    badge.className = ntfy.enabled ? 'badge badge-success' : 'badge badge-neutral';
+  }
+
+  // Info tiles (mirrors the Email Dispatcher card)
+  const server = ntfy.server || 'https://ntfy.sh';
+  const elServer = document.getElementById('ntfy-card-server');
+  if (elServer) elServer.textContent = server.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+
+  const elTopic = document.getElementById('ntfy-card-topic');
+  if (elTopic) elTopic.textContent = ntfy.topic ? ntfy.topic : 'Not configured';
+
+  const elAuth = document.getElementById('ntfy-card-auth');
+  if (elAuth) elAuth.textContent = ntfyAuthLabel(ntfy);
+
+  const elDelivery = document.getElementById('ntfy-card-delivery');
+  if (elDelivery) {
+    const notifyOn = (ntfy.notify_on || 'always').toUpperCase();
+    elDelivery.textContent = `${notifyOn} (priority ${(ntfy.priority || 'default').toLowerCase()})`;
+  }
+
+  // Wizard form fields
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && value !== undefined && value !== null) el.value = value;
+  };
+  setValue('ntfy-server', ntfy.server || '');
+  setValue('ntfy-topic', ntfy.topic || '');
+  setValue('ntfy-username', ntfy.username || '');
+  // token/password are write-only: the fields stay empty and model the stored
+  // secret through their placeholder + the "remove" checkboxes.
+  ['ntfy-token', 'ntfy-password'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  ['ntfy-clear-token', 'ntfy-clear-password'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = false;
+  });
+  const tokenHint = document.getElementById('ntfy-token-hint');
+  if (tokenHint) {
+    tokenHint.textContent = ntfy.token_set
+      ? 'A token is stored; leave empty to keep it.'
+      : 'No token stored yet.';
+  }
+  const pwHint = document.getElementById('ntfy-password-hint');
+  if (pwHint) {
+    pwHint.textContent = ntfy.password_set
+      ? 'A password is stored; leave empty to keep it.'
+      : 'No password stored yet.';
+  }
+  setValue('ntfy-priority', ntfy.priority || 'default');
+  setValue('ntfy-notify-on', ntfy.notify_on || 'always');
+  setValue('ntfy-tags', ntfy.tags || '');
+  setValue('ntfy-click-url', ntfy.click_url || '');
+
+  const chk = document.getElementById('ntfy-enabled');
+  if (chk) chk.checked = !!ntfy.enabled;
+}
+
+function openNtfyModal() {
+  const modal = document.getElementById('modal-ntfy');
+  if (!modal) return;
+  state.ntfyWizard.step = 1;
+  renderNtfySettings(state.settings?.ntfy || {});
+  renderNtfyWizardStep();
+  setNtfyFeedback('');
+  const fb = document.getElementById('ntfy-wiz-test-feedback');
+  if (fb) { fb.classList.add('hidden'); fb.textContent = ''; }
+  modal.classList.add('open');
+}
+
+function closeNtfyModal() {
+  const modal = document.getElementById('modal-ntfy');
+  if (modal) modal.classList.remove('open');
+}
+
+function renderNtfyWizardStep() {
+  const step = state.ntfyWizard.step;
+
+  [1, 2, 3].forEach((n) => {
+    document.getElementById(`ntfy-wiz-step-${n}`)?.classList.toggle('hidden', n !== step);
+    const ind = document.getElementById(`ntfy-wiz-ind-${n}`);
+    if (ind) {
+      ind.classList.toggle('active', n === step);
+      ind.classList.toggle('done', n < step);
+    }
+  });
+
+  const back = document.getElementById('btn-ntfy-wiz-back');
+  const next = document.getElementById('btn-ntfy-wiz-next');
+  const save = document.getElementById('btn-ntfy-save');
+  if (back) back.disabled = step === 1;
+  if (next) next.classList.toggle('hidden', step === 3);
+  if (save) save.classList.toggle('hidden', step !== 3);
+  if (step === 3) updateNtfyReview();
+}
+
+function ntfyWizNext() {
+  if (state.ntfyWizard.step === 1) {
+    const payload = ntfyFormPayload();
+    if (payload.enabled && !payload.topic) {
+      showToast('Please enter an ntfy topic before enabling notifications.', 'error');
+      document.getElementById('ntfy-topic')?.focus();
+      return;
+    }
+  }
+  state.ntfyWizard.step = Math.min(3, state.ntfyWizard.step + 1);
+  renderNtfyWizardStep();
+}
+
+function ntfyWizPrev() {
+  state.ntfyWizard.step = Math.max(1, state.ntfyWizard.step - 1);
+  renderNtfyWizardStep();
+}
+
+function applyNtfyPreset(url) {
+  const el = document.getElementById('ntfy-server');
+  if (!el) return;
+  if (url === '__custom__') {
+    el.value = '';
+    el.focus();
+    return;
+  }
+  el.value = url;
+}
+
+function updateNtfyReview() {
+  const payload = ntfyFormPayload();
+
+  const status = document.getElementById('ntfy-rev-status');
+  if (status) {
+    status.textContent = payload.enabled ? 'Enabled' : 'Disabled';
+    status.style.color = payload.enabled ? '#34d399' : 'var(--text-muted)';
+  }
+  const serverEl = document.getElementById('ntfy-rev-server');
+  if (serverEl) serverEl.textContent = payload.server || 'https://ntfy.sh';
+  const topicEl = document.getElementById('ntfy-rev-topic');
+  if (topicEl) topicEl.textContent = payload.topic || 'Not configured';
+
+  const authEl = document.getElementById('ntfy-rev-auth');
+  if (authEl) authEl.textContent = ntfyAuthLabel(payload);
+
+  const optionsEl = document.getElementById('ntfy-rev-options');
+  if (optionsEl) {
+    const notifyOn = payload.notify_on === 'success' ? 'SUCCESS ONLY'
+      : (payload.notify_on === 'failure' ? 'FAILURES ONLY' : 'EVERY RUN');
+    const tags = payload.tags ? ` • tags ${payload.tags}` : '';
+    optionsEl.textContent = `${notifyOn} • priority ${payload.priority}${tags}`;
+  }
+}
+
+async function loadNtfyPresets() {
+  const list = document.getElementById('ntfy-server-presets');
+  if (!list) return;
+  try {
+    const res = await fetch('/api/settings/ntfy/presets');
+    const data = await res.json();
+    list.innerHTML = '';
+    (data.presets || []).forEach((preset) => {
+      const opt = document.createElement('option');
+      opt.value = preset.url;
+      opt.label = preset.label;
+      list.appendChild(opt);
+    });
+  } catch (err) {
+    // Presets are a convenience; a custom server can always be typed in.
+  }
+}
+
+function ntfyFormPayload() {
+  const payload = {
+    enabled: document.getElementById('ntfy-enabled')?.checked || false,
+    server: (document.getElementById('ntfy-server')?.value || '').trim(),
+    topic: (document.getElementById('ntfy-topic')?.value || '').trim(),
+    username: (document.getElementById('ntfy-username')?.value || '').trim(),
+    clear_token: document.getElementById('ntfy-clear-token')?.checked || false,
+    clear_password: document.getElementById('ntfy-clear-password')?.checked || false,
+    priority: document.getElementById('ntfy-priority')?.value || 'default',
+    notify_on: document.getElementById('ntfy-notify-on')?.value || 'always',
+    tags: (document.getElementById('ntfy-tags')?.value || '').trim(),
+    click_url: (document.getElementById('ntfy-click-url')?.value || '').trim(),
+  };
+  const token = (document.getElementById('ntfy-token')?.value || '').trim();
+  const password = (document.getElementById('ntfy-password')?.value || '').trim();
+  if (token) payload.token = token;
+  if (password) payload.password = password;
+  return payload;
+}
+
+function setNtfyFeedback(text, isError = false) {
+  ['ntfy-feedback', 'ntfy-modal-feedback'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = isError ? '#f87171' : 'var(--text-muted)';
+  });
+}
+
+function setNtfyTestFeedback(text, isError = false) {
+  const el = document.getElementById('ntfy-wiz-test-feedback');
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.textContent = text || '';
+  el.style.background = isError ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.12)';
+  el.style.color = isError ? '#f87171' : '#34d399';
+  el.style.border = isError ? '1px solid rgba(248,113,113,0.35)' : '1px solid rgba(52,211,153,0.35)';
+}
+
+async function saveNtfySettings() {
+  const payload = ntfyFormPayload();
+  if (payload.enabled && !payload.topic) {
+    showToast('Please enter an ntfy topic before enabling notifications.', 'error');
+    state.ntfyWizard.step = 1;
+    renderNtfyWizardStep();
+    document.getElementById('ntfy-topic')?.focus();
+    return;
+  }
+
+  const btn = document.getElementById('btn-ntfy-save');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-rounded" style="animation: spin 0.8s linear infinite;">sync</span> <span>Saving...</span>';
+  }
+
+  try {
+    const res = await fetch('/api/settings/ntfy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Could not save ntfy settings');
+    const saved = data.ntfy || payload;
+    if (state.settings) state.settings.ntfy = saved;
+    renderNtfySettings(saved);
+    if (state.ntfyWizard.step === 3) updateNtfyReview();
+    closeNtfyModal();
+    showToast('ntfy settings saved.', 'success');
+  } catch (err) {
+    showToast(`ntfy settings: ${err.message}`, 'error');
+    setNtfyFeedback(err.message, true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-rounded">save</span> <span>Save &amp; Apply Settings</span>';
+    }
+  }
+}
+
+async function sendTestNtfy(sourceId = 'btn-ntfy-test') {
+  const btn = document.getElementById(sourceId);
+  const originalLabel = sourceId === 'btn-ntfy-wiz-test' ? 'Send Test Notification Now' : 'Send Test Notification';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-rounded" style="animation: spin 0.8s linear infinite;">sync</span> <span>Sending...</span>';
+  }
+  if (sourceId === 'btn-ntfy-wiz-test') setNtfyTestFeedback('Sending test notification...');
+  else setNtfyFeedback('Sending test notification...');
+
+  try {
+    const res = await fetch('/api/settings/ntfy/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ntfy_config: ntfyFormPayload() }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.success === false) throw new Error(data.error || data.detail || 'ntfy test failed');
+    const msg = data.message || 'Test notification sent.';
+    showToast(msg, 'success');
+    if (sourceId === 'btn-ntfy-wiz-test') setNtfyTestFeedback(`✓ ${msg}`);
+    else setNtfyFeedback(msg);
+  } catch (err) {
+    showToast(`ntfy test: ${err.message}`, 'error');
+    if (sourceId === 'btn-ntfy-wiz-test') setNtfyTestFeedback(`✗ ${err.message}`, true);
+    else setNtfyFeedback(err.message, true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<span class="material-symbols-rounded">send</span> <span>${originalLabel}</span>`;
+    }
   }
 }
 

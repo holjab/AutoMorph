@@ -33,6 +33,11 @@ try:
 except ImportError:
     import email_template
 
+try:
+    from . import ntfy_notify
+except ImportError:
+    import ntfy_notify
+
 logger = logging.getLogger(__name__)
 
 
@@ -597,6 +602,41 @@ def send_email(
 # Main Entrypoint & CLI
 # ---------------------------------------------------------------------------
 
+def portal_base(config: dict) -> str | None:
+    """
+    Public base URL of the portal (first configured tunnel). Returns None when
+    only the local fallback exists, a localhost URL is useless in a push
+    notification, so the notification config decides instead.
+    """
+    try:
+        endpoints = resolve_tunnel_endpoints(config)
+        base = next((e["base_url"] for e in endpoints if e.get("id") != "local"), None)
+        return base.rstrip("/") if base else None
+    except Exception:
+        return None
+
+
+def portal_link(patch_success: dict[str, Any], config: dict) -> str | None:
+    """
+    Builds the link opened from the notification: the patched APK itself when
+    exactly one app was built, otherwise the portal root.
+    """
+    try:
+        base = portal_base(config)
+        if not base:
+            return None
+        if len(patch_success) != 1:
+            return base
+        pkg, data = next(iter(patch_success.items()))
+        dest = data.get("dest") if isinstance(data, dict) else data
+        if not dest:
+            return base
+        patched_root = Path(config.get("project_root", ".")) / "apps" / "patched"
+        rel = Path(str(dest)).resolve().relative_to(patched_root.resolve())
+        return f"{base}/files/{rel.as_posix()}"
+    except Exception:
+        return None
+
 def main(
     patch_success: dict[str, Path | dict],
     failures: dict[str, dict] | None = None,
@@ -702,9 +742,23 @@ def main(
 
     if not config.get("email", {}).get("enabled", False):
         logger.info("Email notification is disabled in config.yaml. Skipping send.")
-        return None, text_body
+    else:
+        send_email(subject, text_body, html_body, config, attachments)
 
-    send_email(subject, text_body, html_body, config, attachments)
+    # ntfy runs independently of the SMTP dispatcher and has its own enable flag,
+    # so notification works on hosts without a mail server as well.
+    try:
+        ntfy_notify.notify_run(
+            patch_success=patch_success,
+            failures=failures,
+            config=config,
+            duration=duration,
+            click_url=portal_link(patch_success, config),
+            download_base=portal_base(config),
+        )
+    except Exception as exc:  # a notification must never fail a build
+        logger.warning(f"ntfy notification skipped: {exc}")
+
     return None, text_body
 
 

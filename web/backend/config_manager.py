@@ -1114,6 +1114,7 @@ def get_all_settings() -> dict[str, Any]:
     _, data = load_config_raw()
 
     email_data = data.get("email") or {}
+    ntfy_data = data.get("ntfy") if isinstance(data.get("ntfy"), dict) else {}
     ts_data = data.get("tailscale") if isinstance(data.get("tailscale"), dict) else {}
     ts_url = str(
         os.getenv("TAILSCALE_FUNNEL_URL")
@@ -1155,6 +1156,22 @@ def get_all_settings() -> dict[str, Any]:
     except (ValueError, TypeError):
         max_original_packages = None
 
+    ntfy_token_set = bool(str(ntfy_data.get("token") or "").strip() or os.getenv("NTFY_TOKEN"))
+    ntfy_password_set = bool(str(ntfy_data.get("password") or "").strip() or os.getenv("NTFY_PASSWORD"))
+    ntfy_token_cfg = str(ntfy_data.get("token") or "").strip()
+    ntfy_user_cfg = str(ntfy_data.get("username") or "").strip()
+    ntfy_token_env = bool(os.getenv("NTFY_TOKEN"))
+    ntfy_user_env = bool(os.getenv("NTFY_USERNAME"))
+    if ntfy_token_cfg or ntfy_token_env:
+        ntfy_auth_mode = "bearer"
+    elif ntfy_user_cfg or ntfy_user_env:
+        ntfy_auth_mode = "basic"
+    else:
+        ntfy_auth_mode = "none"
+    ntfy_auth_from_env = bool(
+        (ntfy_token_env or ntfy_user_env) and not (ntfy_token_cfg or ntfy_user_cfg)
+    )
+
     raw_max_patched = data.get("max_patched_packages")
     try:
         max_patched_packages = int(raw_max_patched) if raw_max_patched is not None else None
@@ -1191,6 +1208,24 @@ def get_all_settings() -> dict[str, Any]:
             "attach_result_json": bool(email_data.get("attach_result_json")),
             "layout_mode": str(email_data.get("layout_mode") or "auto"),
             "compact_threshold": int(email_data.get("compact_threshold") or 15),
+        },
+        "ntfy": {
+            "enabled": bool(ntfy_data.get("enabled")),
+            # Auth state for the UI: report whether credentials are configured
+            # (from config.yaml or the NTFY_* env) without ever exposing them.
+            "auth_mode": ntfy_auth_mode,
+            "auth_from_env": ntfy_auth_from_env,
+            "server": str(ntfy_data.get("server") or "https://ntfy.sh"),
+            "topic": str(ntfy_data.get("topic") or ""),
+            # Secrets are never returned: the portal has no login, so anyone on
+            # the network could read the token. Only whether one is set.
+            "token_set": ntfy_token_set,
+            "password_set": ntfy_password_set,
+            "username": str(ntfy_data.get("username") or ""),
+            "priority": str(ntfy_data.get("priority") or "default"),
+            "tags": str(ntfy_data.get("tags") or ""),
+            "click_url": str(ntfy_data.get("click_url") or ""),
+            "notify_on": str(ntfy_data.get("notify_on") or "always"),
         },
     }
 
@@ -1296,6 +1331,76 @@ def update_email_settings(email_data: dict[str, Any]) -> dict[str, Any]:
 
     save_config_raw(yaml, data)
     return get_all_settings()["email"]
+
+
+def update_ntfy_settings(ntfy_data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Updates ntfy notification settings in config.yaml.
+
+    Token and password are write-only: because they are never sent to the
+    browser, an empty field means "keep what is stored" and `clear_token` /
+    `clear_password` remove them.
+    """
+    yaml, data = load_config_raw()
+    if "ntfy" not in data or not isinstance(data["ntfy"], dict):
+        data["ntfy"] = CommentedMap()
+
+    ntfy_map = data["ntfy"]
+    for key in ("server", "topic", "username", "tags", "click_url", "priority", "notify_on"):
+        if key in ntfy_data and ntfy_data[key] is not None:
+            ntfy_map[key] = str(ntfy_data[key]).strip()
+    # Secrets are write-only: an empty value keeps the stored one, so a normal
+    # settings save cannot wipe a token the user never saw.
+    for secret, clear_flag in (("token", "clear_token"), ("password", "clear_password")):
+        if ntfy_data.get(clear_flag):
+            ntfy_map[secret] = ""
+        elif ntfy_data.get(secret):
+            ntfy_map[secret] = str(ntfy_data[secret]).strip()
+    if "enabled" in ntfy_data and ntfy_data["enabled"] is not None:
+        ntfy_map["enabled"] = bool(ntfy_data["enabled"])
+
+    save_config_raw(yaml, data)
+    return get_all_settings()["ntfy"]
+
+
+def send_test_ntfy(override: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    Sends a test notification so server, topic and credentials can be verified
+    from the web portal (mirrors send_test_email).
+    """
+    settings = dict(get_all_settings()["ntfy"])
+    if override:
+        settings.update({k: v for k, v in override.items() if v is not None})
+    settings["enabled"] = True
+
+    import sys
+
+    scripts_dir = str(Path(__file__).resolve().parent.parent.parent / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import ntfy_notify
+
+    resolved = ntfy_notify.resolve_settings({"ntfy": settings})
+    if not resolved.get("topic"):
+        return {"success": False, "error": "No ntfy topic configured"}
+
+    payload = {
+        "title": "[AutoMorph] Test notification",
+        "message": "This test confirms server, topic and credentials are working.\n"
+                   f"Sent from the AutoMorph web portal at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
+        "priority": resolved["priority"],
+        "tags": resolved["tags"] or ["white_check_mark"],
+        "click": resolved.get("click_url") or "",
+        "topic": resolved["topic"],
+        "server": resolved["server"],
+    }
+    result = ntfy_notify.send_notification(payload, resolved)
+    if result.get("success"):
+        return {
+            "success": True,
+            "message": f"Test notification sent to {result['server']}/{result['topic']}",
+        }
+    return {"success": False, "error": result.get("error") or "ntfy refused the notification"}
 
 
 def send_test_email(override: dict[str, Any] | None = None, recipient: str | None = None) -> dict[str, Any]:
