@@ -1,0 +1,25 @@
+#!/bin/sh
+# /usr/bin/automorph — CLI wrapper for native installs.
+# Usage: automorph [uvicorn extra args] | automorph run <package> | automorph --port 8080
+set -eu
+APP_DIR="${AUTOMORPH_APP_DIR:-/opt/automorph}"
+DATA_DIR="${AUTOMORPH_ROOT:-/var/lib/automorph}"
+PORT="${AUTOMORPH_PORT:-8080}"
+HOST="${AUTOMORPH_HOST:-0.0.0.0}"
+VENV_PY="$APP_DIR/.venv/bin/python"
+
+if [ ! -x "$VENV_PY" ]; then
+  echo "automorph: venv python not found at $VENV_PY" >&2
+  echo "Run 'sudo /opt/automorph/tools/ensure-venv.sh' or reinstall the package." >&2
+  exit 1
+fi
+
+export AUTOMORPH_ROOT="$DATA_DIR"
+
+if [ "${1:-}" = "run" ]; then
+  shift
+  exec "$VENV_PY" "$APP_DIR/scripts/main.py" "$@"
+fi
+
+exec "$VENV_PY" -m uvicorn web.backend.main:app \
+  --host "$HOST" --port "$PORT" --app-dir "$APP_DIR" "$@"

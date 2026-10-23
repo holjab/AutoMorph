@@ -44,3 +44,7 @@ node_modules/
 test-results/
 playwright-report/
 .playwright/
+
+# Native package build outputs (published to GitHub Releases by CI)
+dist/
+packaging/tools-staged/

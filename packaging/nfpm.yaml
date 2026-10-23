@@ -1,0 +1,72 @@
+# AutoMorph native packaging (deb/rpm) — single source of truth.
+# Used by CI via goreleaser/nfpm-action. See packaging/build.sh for a
+# local dpkg-deb/rpmbuild fallback that mirrors this layout.
+name: automorph
+arch: "${ARCH}"
+platform: linux
+version: "${VERSION}"
+release: "1"
+maintainer: AutoMorph Contributors
+description: Self-hosted tool for automatically patching and distributing Android packages (Morphe Desktop).
+vendor: AutoMorph
+homepage: https://github.com/holjab/AutoMorph
+license: MIT
+section: utils
+priority: optional
+depends:
+  - python3 (>= 3.12)
+  - python3-venv
+  - python3-pip
+  - "openjdk-21-jre-headless | openjdk-21-jre"
+  - curl
+  - ca-certificates
+contents:
+  # Immutable application payload
+  - src: ../scripts
+    dst: /opt/automorph/scripts
+  - src: ../web
+    dst: /opt/automorph/web
+  - src: ../defaults
+    dst: /opt/automorph/defaults
+  - src: ../requirements.txt
+    dst: /opt/automorph/requirements.txt
+  - src: ../LICENSE
+    dst: /opt/automorph/LICENSE
+  - src: ./tools-staged/
+    dst: /opt/automorph/tools
+  # Wrapper + service
+  - src: ./automorph
+    dst: /usr/bin/automorph
+    file_info: { mode: 0o755 }
+  - src: ./automorph.service
+    dst: /lib/systemd/system/automorph.service
+    file_info: { mode: 0o644 }
+  # Conffiles / mutable state live under /var + /etc, created by postinstall
+  - src: ./example.env
+    dst: /usr/share/doc/automorph/example.env
+overrides:
+  deb:
+    depends:
+      - python3 (>= 3.12)
+      - python3-venv
+      - python3-pip
+      - "openjdk-21-jre-headless | openjdk-21-jre"
+      - curl
+      - ca-certificates
+    scripts:
+      postinstall: ./postinst.sh
+      preremove: ./prerm.sh
+    conffiles:
+      - /etc/automorph/.env
+  rpm:
+    depends:
+      - python3 >= 3.12
+      - java-21-openjdk-headless
+      - curl
+      - ca-certificates
+    scripts:
+      postinstall: ./postinst.sh
+      preremove: ./prerm.sh
+scripts:
+  postinstall: ./postinst.sh
+  preremove: ./prerm.sh

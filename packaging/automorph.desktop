@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=AutoMorph
+Comment=Automatically patch and distribute Android packages
+Exec=automorph
+Icon=automorph
+Categories=Utility;
+Keywords=apk;patch;android;
+Terminal=false
+StartupWMClass=automorph
+X-AppImage-Version=1.0

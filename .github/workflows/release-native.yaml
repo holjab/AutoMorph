@@ -1,0 +1,101 @@
+name: Build native packages (.deb, .rpm, .AppImage)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Override version (e.g. 1.2.3). Defaults to tag or run number.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            V="${{ inputs.version }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            V="${{ github.ref_name }}"
+          else
+            V="0.${{ github.run_number }}"
+          fi
+          CLEAN="${V#v}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "clean=$CLEAN" >> "$GITHUB_OUTPUT"
+          echo "morphe=1.19.0" >> "$GITHUB_OUTPUT"
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm dpkg-dev curl python3 file desktop-file-utils
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Stage morphe jar + example.env
+        run: |
+          mkdir -p packaging/tools-staged
+          curl -fsSL -o "packaging/tools-staged/morphe-desktop-${{ steps.ver.outputs.morphe }}-all.jar" \
+            "https://github.com/MorpheApp/morphe-desktop/releases/download/v${{ steps.ver.outputs.morphe }}/morphe-desktop-${{ steps.ver.outputs.morphe }}-all.jar"
+          ln -sf "morphe-desktop-${{ steps.ver.outputs.morphe }}-all.jar" packaging/tools-staged/morphe.jar
+          cp example.env packaging/example.env
+          printf '{"version":"%s","tag":"%s","run_number":%s,"branch":"main","commit":"%s","built_at":"%s"}\n' \
+            "${{ steps.ver.outputs.clean }}" "${{ steps.ver.outputs.version }}" "${{ github.run_number }}" "${{ github.sha }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > web/version.json
+          cat web/version.json
+
+      - name: Build .deb + .rpm (amd64, arm64)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          for ARCH in amd64 arm64; do
+            ARCH="$ARCH" VERSION="$VERSION" nfpm package --config packaging/nfpm.yaml --packager deb --target "dist/automorph_${VERSION#v}-1_${ARCH}.deb"
+            ARCH="$ARCH" VERSION="$VERSION" nfpm package --config packaging/nfpm.yaml --packager rpm --target "dist/automorph-${VERSION#v}-1.${ARCH}.rpm" || true
+          done
+          # nfpm rpm arch naming: normalize arm64 -> aarch64
+          for f in dist/*.arm64.rpm; do [ -e "$f" ] && mv "$f" "${f%.arm64.rpm}.aarch64.rpm" || true; done
+          ls -la dist/
+
+      - name: Build AppImage (x86_64)
+        run: |
+          sudo apt-get install -y libfuse2 || true
+          curl -fsSL -o /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          rm -rf AppDir && mkdir -p AppDir/usr/opt/automorph AppDir/usr/bin AppDir/usr/share/applications
+          cp -r scripts web defaults AppDir/usr/opt/automorph/
+          cp requirements.txt AppDir/usr/opt/automorph/
+          mkdir -p AppDir/usr/opt/automorph/tools
+          cp packaging/tools-staged/*.jar AppDir/usr/opt/automorph/tools/
+          cp packaging/AppRun.sh AppDir/AppRun
+          cp packaging/automorph.desktop AppDir/automorph.desktop
+          cp packaging/automorph.desktop AppDir/usr/share/applications/automorph.desktop
+          cp images/logo.png AppDir/automorph.png
+          chmod +x AppDir/AppRun
+          /tmp/appimagetool --appimage-extract >/dev/null 2>&1 || true
+          ARCH=x86_64 /tmp/appimagetool AppDir "dist/AutoMorph-${{ steps.ver.outputs.clean }}-x86_64.AppImage"
+
+      - name: Smoke-test deb contents
+        run: |
+          dpkg-deb -c dist/*.amd64.deb | head -30
+          dpkg-deb -f dist/*.amd64.deb Package Version Architecture Depends
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            packaging/install.sh
+          fail_on_unmatched_files: false

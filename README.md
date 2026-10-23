@@ -31,13 +31,43 @@ For full step-by-step guides, visit our **[Documentation Hub](docs/README.md)**:
 
 * ☁️ **[Oracle Free Tier Setup Guide (Optional)](docs/oracle-setup.md)**: Optional guide to launch a free VPS on Oracle Cloud (skip if you already have your own server!).
 * 🚇 **[Remote Access & Tunnels Guide](docs/tunnels.md)**: Expose your portal securely with free HTTPS via Pangolin, Tailscale Funnel, or Cloudflare Tunnels.
+* 💻 **[Native Install (.deb / .rpm / .AppImage)](docs/native-install.md)**: Install without Docker via systemd packages or the 1-liner.
 * 📖 **[User Guide & Web Interface](docs/user-guide.md)**: Managing packages, customizing patch options, daily schedules, and email notifications.
 
 ## Prerequisites
 
-- Docker & Docker Compose
+- Docker & Docker Compose **or** a native install (Debian/Ubuntu, Fedora/RHEL, Arch, or AppImage — no Docker needed)
 
-## Quick Start
+## Install
+
+### Option A — 1-liner (native .deb / .rpm / .AppImage)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/9M2PJU/AutoMorph/main/packaging/install.sh | sudo bash
+```
+
+Installs the matching `.deb`/`.rpm` (or `.AppImage` fallback), enables the
+`automorph` systemd service, and serves the portal on `http://localhost:8080`.
+See [docs/native-install.md](docs/native-install.md) for channels (`--channel deb|rpm|appimage|docker`),
+version pins (`--version v1.2.3`), and manual `dpkg`/`dnf`/AppImage steps.
+
+### Option B — Arch Linux (AUR)
+
+```bash
+yay -S automorph-git
+# or: paru -S automorph-git
+```
+
+Then configure and start:
+
+```bash
+sudo nano /etc/automorph/.env
+sudo systemctl enable --now automorph
+```
+
+PKGBUILD is maintained in [`packaging/aur/automorph-git`](packaging/aur/automorph-git); details in [docs/native-install.md](docs/native-install.md#arch-linux-aur).
+
+### Option C — Docker Compose
 
 1. Set up your preferred [remote tunnel](docs/tunnels.md) (Pangolin, Tailscale Funnel, or Cloudflare) to obtain your URL and tokens.
 2. Download `compose.yaml` (from [`default_compose.yaml`](default_compose.yaml)) and [`example.env`](example.env).

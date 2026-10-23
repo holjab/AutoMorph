@@ -1,0 +1,24 @@
+[Unit]
+Description=AutoMorph — automated APK patching portal
+Documentation=https://github.com/holjab/AutoMorph
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=automorph
+Group=automorph
+Environment=AUTOMORPH_ROOT=/var/lib/automorph
+EnvironmentFile=-/etc/automorph/automorph.env
+ExecStart=/opt/automorph/.venv/bin/python -m uvicorn web.backend.main:app --host 0.0.0.0 --port 8080 --app-dir /opt/automorph
+WorkingDirectory=/opt/automorph
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/automorph /var/log/automorph
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
