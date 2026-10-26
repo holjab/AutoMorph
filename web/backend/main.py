@@ -68,6 +68,7 @@ if (PROJECT_ROOT / ".env").is_file():
 class AppConfigRequest(BaseModel):
     package: str
     package_name: str | None = None
+    display_name: str | None = None
     repos: list[str] = []
     patch_aliases: list[dict[str, Any]] = []
 

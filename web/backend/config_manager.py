@@ -846,6 +846,7 @@ def _format_app_entry(
     return {
         "package": pkg,
         "package_name": pkg,
+        "display_name": str(item.get("display_name") or "").strip(),
         "repos": list(repos),
         "patch_aliases": list(aliases) if isinstance(aliases, list) else [],
         "enabled": is_enabled,
@@ -949,9 +950,13 @@ def add_or_update_app(app_data: dict[str, Any]) -> dict[str, Any]:
     repos = [r.strip() for r in repos if isinstance(r, str) and r.strip()]
 
     patch_aliases = app_data.get("patch_aliases") or []
+    display_name = str(app_data.get("display_name") or "").strip()
 
     # Format the new app YAML block
     new_block_lines = [f"  - package_name: {package}\n"]
+    if display_name:
+        safe_name = display_name.replace('"', "'")
+        new_block_lines.append(f'    display_name: "{safe_name}"\n')
     if repos:
         new_block_lines.append("    repos:\n")
         for r in repos:

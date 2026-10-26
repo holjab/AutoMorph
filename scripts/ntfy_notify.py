@@ -153,6 +153,42 @@ def _download_url(base: str | None, dest: Any) -> str:
     return f"{str(base).rstrip('/')}/files/{rel}"
 
 
+def _display_names(config: dict[str, Any] | None) -> dict[str, str]:
+    """Maps package names to the optional `display_name` from config.yaml."""
+    names: dict[str, str] = {}
+    for key in ("packages", "apps"):
+        for item in (config or {}).get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            pkg = str(item.get("package_name") or item.get("package") or "").strip()
+            name = str(item.get("display_name") or "").strip()
+            if pkg and name:
+                names[pkg] = name
+    return names
+
+
+def _patch_count(dest: Any) -> int:
+    """Reads the applied patch count from the result.json next to the built APK."""
+    try:
+        result_file = Path(str(dest)).parent / "result.json"
+        if result_file.is_file():
+            data = json.loads(result_file.read_text(encoding="utf-8"))
+            return len(data.get("appliedPatches") or [])
+    except Exception:
+        pass
+    return 0
+
+
+def _short_reason(reason: str, limit: int = 60) -> str:
+    """One short line for a failure, because clients cut the rest anyway."""
+    reason = " ".join((reason or "").split())
+    if len(reason) <= limit:
+        return reason
+    cut = reason[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:")
+    return f"{cut}..."
+
+
+
 def build_message(
     patch_success: dict[str, Any],
     failures: dict[str, dict] | None = None,
@@ -168,14 +204,21 @@ def build_message(
     prefix = subject_prefix or ((config or {}).get("email") or {}).get("subject_prefix") or "[AutoMorph]"
     link_base = (download_base or settings.get("click_url") or "").strip()
 
+    names = _display_names(config)
+
     ok_lines: list[str] = []
     for pkg, data in patch_success.items():
         dest = data.get("dest") if isinstance(data, dict) else data
         version = _apk_version(dest)
-        ok_lines.append(f"✓ {pkg}{' ' + version if version else ''}")
+        label = names.get(pkg) or pkg
+        patches = _patch_count(dest)
+        line = f"✓ **{label}**" + (f" {version}" if version else "")
+        if patches:
+            line += f" - {patches} patches"
         link = _download_url(link_base, dest)
         if link:
-            ok_lines.append(f"  {link}")
+            line += f"\n[Download APK]({link})"
+        ok_lines.append(line)
 
     fail_lines: list[str] = []
     for pkg, info in failures.items():
@@ -187,10 +230,10 @@ def build_message(
             reason = reason or str(info.get("reason") or "")
         else:
             reason = str(info)
-        reason = " ".join(reason.split())
-        if len(reason) > 120:
-            reason = reason[:117] + "…"
-        fail_lines.append(f"✗ {pkg}{': ' + reason if reason else ''}")
+        label = names.get(pkg) or pkg
+        short = _short_reason(reason) or "failed"
+        hint = " (see report)" if (click_url or settings["click_url"]) else ""
+        fail_lines.append(f"✗ **{label}**: {short}{hint}")
 
     duration_str = ""
     if isinstance(duration, (int, float)):
@@ -199,11 +242,15 @@ def build_message(
     elif duration:
         duration_str = str(duration)
 
-    summary = f"{len(patch_success)} patched · {len(fail_lines)} failed"
+    summary = f"{len(patch_success)} patched, {len(fail_lines)} failed"
     if duration_str:
-        summary += f" · {duration_str}"
+        summary += f", {duration_str}"
 
-    body_lines = ok_lines + fail_lines + ["", summary]
+    body_lines: list[str] = []
+    for line in ok_lines + fail_lines:
+        body_lines.append(line)
+        body_lines.append("")
+    body_lines.append(summary)
     title = f"{prefix} {len(patch_success)} patched" + (f", {len(fail_lines)} failed" if fail_lines else "")
     if len(title) > 120:
         title = title[:117] + "…"
@@ -223,6 +270,8 @@ def build_message(
         "priority": priority,
         "tags": tags,
         "click": (click_url or settings["click_url"] or "").strip(),
+        # ntfy renders the body as Markdown (bold names, clickable download links)
+        "markdown": True,
         "topic": settings["topic"],
         "server": settings["server"],
     }
@@ -247,6 +296,8 @@ def send_notification(payload: dict[str, Any], settings: dict[str, Any] | None =
         body["tags"] = payload["tags"]
     if payload.get("click"):
         body["click"] = payload["click"]
+    if payload.get("markdown"):
+        body["markdown"] = True
 
     headers = {"Content-Type": "application/json", "User-Agent": "AutoMorph"}
     if settings.get("token"):
