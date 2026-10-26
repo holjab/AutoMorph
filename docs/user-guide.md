@@ -30,6 +30,7 @@ Welcome to the AutoMorph user guide! This document explains how to use the web i
   - [6.1 Why Keystores Matter for Updates](#61-why-keystores-matter-for-updates)
   - [6.2 Exporting and Placing Your Keystore](#62-exporting-and-placing-your-keystore)
 - [7. Email Dispatcher & Notifications](#7-email-dispatcher--notifications)
+  - [7.1 ntfy Push Notifications](#71-ntfy-push-notifications)
 - [8. Downloading Builds](#8-downloading-builds)
 
 ---
@@ -201,9 +202,75 @@ AutoMorph can send rich email build reports directly to your inbox whenever patc
 
 Each report contains direct download links, checksums, and patch summaries.
 
+### 7.1 ntfy Push Notifications
+
+[ntfy](https://ntfy.sh) sends the build summary to your phone as a push notification, so
+you do not need a mail server. It runs independently of the email dispatcher, and you can
+use one, the other, or both.
+
+You can set it up in the portal or by editing the config file. The portal is quicker,
+because it tests the connection before anything is saved.
+
+In the portal, the Settings tab has an ntfy card that shows the current server, topic,
+authentication and delivery settings. Its Edit button opens a wizard with three steps:
+
+1. Server and topic. Choose `ntfy.sh`, `ntfy.envs.net` or `ntfy.adminforge.de`, or enter
+   the address of your own instance, then the topic you subscribe to in the ntfy app. A
+   token, or a username and password, is only needed when the instance protects the topic.
+2. Delivery and options. Default priority from `min` to `max`, which runs notify
+   (`always`, `success`, `failure`), tags, and the URL that opens when you tap the
+   notification.
+3. Review and test. The wizard shows the settings in a table and offers *Send Test
+   Notification Now*, which publishes a real message before you save.
+
+The wizard writes the same values to `tools/automorph-data/config.yaml`:
+
+```yaml
+ntfy:
+  enabled: true
+  server: "https://ntfy.sh"        # or your self-hosted instance
+  topic: "automorph"
+  token: ""                        # access token for protected topics
+  priority: "default"              # min | low | default | high | max
+  tags: "robot,package"
+  click_url: "https://patcher.example.com"   # opened when tapping the notification
+  notify_on: "always"              # always | success | failure
+```
+
+Environment variables override the config file: `NTFY_ENABLED`, `NTFY_URL` (server, or a
+full `https://server/topic` URL), `NTFY_TOPIC`, `NTFY_TOKEN`, `NTFY_USERNAME`,
+`NTFY_PASSWORD`, `NTFY_PRIORITY`, `NTFY_TAGS`, `NTFY_CLICK_URL`, `NTFY_NOTIFY_ON`.
+
+A notification lists one line per built app with its version and download URL, then one
+line per failure with the reason, then the totals and how long the run took. When a tunnel
+or `NTFY_CLICK_URL` is set, tapping the notification opens the portal. Failures arrive with
+`priority: high` and a warning tag, successes with a check mark.
+
+> [!NOTE]
+> Instances with `auth-default-access: deny-all` answer `403 Forbidden` to anonymous
+> publishing. Create an access token (or a user) for the topic, then enter it in the wizard
+> or pass it as `NTFY_TOKEN` (sent as the bearer token) or as
+> `NTFY_USERNAME`/`NTFY_PASSWORD`.
+
+> [!WARNING]
+> The portal has no login of its own, so the API never returns the ntfy token or password.
+> The wizard only reports whether a credential is stored, and an empty field keeps the
+> stored one. Anyone who can reach the portal can still use those credentials, and anyone
+> who can read `config.yaml` on the host can read them. If that matters, set the token
+> through `NTFY_TOKEN` in the container environment, and keep the portal on a private
+> network or behind a reverse proxy that asks for authentication.
+
+Verify the setup without running a build:
+
+```bash
+curl -X POST http://localhost:8080/api/settings/ntfy/test -H 'Content-Type: application/json' -d '{}'
+# or from the CLI:
+python3 scripts/ntfy_notify.py --dry-run     # print the payload only
+NTFY_URL=https://ntfy.example.com/automorph NTFY_TOKEN=… python3 scripts/ntfy_notify.py
+```
+
 ---
 
-## 8. Downloading Builds
 
 You can download completed APKs through multiple avenues:
 1. **Web Dashboard**: Click the **Download** button directly on any completed app card.

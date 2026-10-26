@@ -2001,7 +2001,8 @@ a.drawer-patch-owner-chip:hover,
   gap: 14px;
 }
 
-.email-info-grid {
+.email-info-grid,
+.info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
@@ -2461,6 +2462,7 @@ body {
   .settings-grid-3,
   .toggles-grid,
   .email-info-grid,
+  .info-grid,
   .ts-ingress-grid,
   .update-compare-grid {
     grid-template-columns: 1fr !important;

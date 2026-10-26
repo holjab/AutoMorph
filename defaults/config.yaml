@@ -32,3 +32,23 @@ email:
   attach_result_json: false      # Optional attachment of result.json to email
   layout_mode: "auto"            # "auto" (compact if > threshold), "compact", or "cards"
   compact_threshold: 15          # App count above which email switches to compact view
+
+
+# ---------------------------------------------------------------------------
+# ntfy Notifications
+# ---------------------------------------------------------------------------
+# Independent of the email dispatcher: set enabled: true and a topic to get a
+# push notification on your phone after every run. `server` may be any ntfy
+# instance (https://ntfy.sh or self-hosted). Environment variables NTFY_* win
+# over these values.
+ntfy:
+  enabled: false
+  server: "https://ntfy.sh"
+  topic: ""
+  token: ""                      # optional Bearer token for protected topics
+  username: ""                   # alternative to token: Basic auth
+  password: ""
+  priority: "default"            # min | low | default | high | max (or 1-5)
+  tags: ""                       # optional, comma separated, e.g. "robot,package"
+  click_url: ""                  # optional: opened when tapping the notification
+  notify_on: "always"            # always | success | failure
