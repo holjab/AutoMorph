@@ -260,9 +260,7 @@ class Downloader:
 
         if source == "apkpure":
             is_xapk = "/XAPK/" in url
-            dest_file = (
-                outer_dir / f"{package_name}-{version_name}.{'xapk' if is_xapk else 'apk'}"
-            )
+            dest_file = outer_dir / f"{package_name}.{'xapk' if is_xapk else 'apk'}"
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101"
