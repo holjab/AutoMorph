@@ -1176,6 +1176,7 @@ def get_all_settings() -> dict[str, Any]:
             "max_logs": max_logs,
             "max_original_packages": max_original_packages,
             "max_patched_packages": max_patched_packages,
+            "portal_base_url": str(data.get("portal_base_url") or "").strip(),
         },
         "tunnels": {
             "tailscale": {
@@ -1237,6 +1238,8 @@ def update_system_settings(settings: dict[str, Any]) -> dict[str, Any]:
             data["max_patched_packages"] = val if (val is not None and val > 0) else None
         except (ValueError, TypeError):
             data["max_patched_packages"] = None
+    if "portal_base_url" in settings and settings["portal_base_url"] is not None:
+        data["portal_base_url"] = str(settings["portal_base_url"]).strip()
 
     save_config_raw(yaml, data)
     return get_all_settings()["system"]

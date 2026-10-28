@@ -155,6 +155,7 @@ def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]
 
     # 4. Fallback to Local Origin if no tunnels are configured
     if not endpoints:
+        portal_base = str(config.get("portal_base_url") or "").strip().rstrip("/")
         endpoints.append({
             "id": "local",
             "label": "Local",
@@ -162,7 +163,7 @@ def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]
             "icon": "⚡",
             "color": "#4A7FC8",
             "border_color": "#3b69a6",
-            "base_url": "http://localhost:8080",
+            "base_url": portal_base or "http://localhost:8080",
         })
 
     return endpoints

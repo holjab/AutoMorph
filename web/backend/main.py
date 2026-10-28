@@ -106,6 +106,7 @@ class SystemSettingsRequest(BaseModel):
     max_logs: int | None = None
     max_original_packages: int | None = None
     max_patched_packages: int | None = None
+    portal_base_url: str | None = None
 
 
 class TunnelsSettingsRequest(BaseModel):
@@ -891,6 +892,9 @@ async def serve_patched_files(request: Request, subpath: str = "") -> Response:
 
 def _get_base_url(request: Request) -> str:
     """Detects external public base URL from headers or fallback."""
+    portal = str(config_manager.get_all_settings().get("system", {}).get("portal_base_url") or "").strip().rstrip("/")
+    if portal:
+        return portal
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
     if host and "localhost" not in host and "127.0.0.1" not in host:
@@ -916,16 +920,27 @@ def _ensure_obtainium_files(base_url: str) -> tuple[Path, Path]:
     index_file = state_dir / "index-v2.json"
     patched_json = state_dir / "patched.json"
 
-    if not export_file.is_file() or not index_file.is_file():
-        if patched_json.is_file():
-            try:
-                scripts_dir = str(PROJECT_ROOT / "scripts")
-                if scripts_dir not in sys.path:
-                    sys.path.insert(0, scripts_dir)
-                import manager
-                manager.build_all_jsons(state_dir, patched_json, base_url)
-            except Exception as e:
-                logger.error(f"Error auto-generating Obtainium/FDroid JSONs: {e}")
+    stored_base = ""
+    if index_file.is_file():
+        try:
+            stored = json.loads(index_file.read_text(encoding="utf-8"))
+            stored_base = str((stored.get("repo") or {}).get("address") or "").rstrip("/")
+        except Exception:
+            stored_base = ""
+
+    if patched_json.is_file() and (
+        not export_file.is_file()
+        or not index_file.is_file()
+        or stored_base != base_url.rstrip("/")
+    ):
+        try:
+            scripts_dir = str(PROJECT_ROOT / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import manager
+            manager.build_all_jsons(state_dir, patched_json, base_url)
+        except Exception as e:
+            logger.error(f"Error auto-generating Obtainium/FDroid JSONs: {e}")
 
     return export_file, index_file
 

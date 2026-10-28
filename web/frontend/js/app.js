@@ -1905,6 +1905,9 @@ function renderSettings(settings) {
   const inpSched = document.getElementById('setting-schedule-time');
   if (inpSched && sys.schedule_time !== undefined) inpSched.value = sys.schedule_time || '03:00';
 
+  const inpPortal = document.getElementById('setting-portal-base-url');
+  if (inpPortal && sys.portal_base_url !== undefined) inpPortal.value = sys.portal_base_url || '';
+
   const chkStrip = document.getElementById('setting-striplibs');
   if (chkStrip && sys.striplibs !== undefined) chkStrip.checked = sys.striplibs !== false;
 
@@ -2040,6 +2043,7 @@ async function saveSystemSettings() {
       architecture: document.getElementById('setting-arch')?.value,
       timezone: document.getElementById('setting-timezone')?.value,
       schedule_time: document.getElementById('setting-schedule-time')?.value,
+      portal_base_url: document.getElementById('setting-portal-base-url')?.value?.trim() || '',
       striplibs: document.getElementById('setting-striplibs')?.checked,
       low_spec_mode: document.getElementById('setting-lowspec')?.checked,
       run_on_startup: document.getElementById('setting-run-on-startup')?.checked,

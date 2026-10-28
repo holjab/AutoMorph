@@ -11,6 +11,8 @@ max_logs: 5
 max_original_packages: null
 max_patched_packages: null
 
+portal_base_url: ""
+
 packages:
 
 

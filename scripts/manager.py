@@ -111,7 +111,10 @@ class Obtanium:
             latest_details = details[latest_version]
             patched_package_name = latest_details['package'].get('patched_package_name', package_name)
             additional_settings = {'appIdOrName': patched_package_name, 'versionExtractionRegEx': r'\d+(\.\d+)+', 'pickHighestVersionCode': True}
-            apk_list = [[latest_details['file']['file_name'], latest_details['file']['url']]]
+            stored_url = latest_details['file']['url']
+            apk_path = urlparse(stored_url).path if stored_url else ""
+            apk_url = f"{self.base_url.rstrip('/')}{apk_path}" if apk_path else stored_url
+            apk_list = [[latest_details['file']['file_name'], apk_url]]
 
             app = {
                 'id': patched_package_name,

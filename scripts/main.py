@@ -24,7 +24,7 @@ def main(project_root: Path, conf: dict) -> None:
     interrupted = False
     try:
         original_dir, patched_dir, architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = init(project_root, conf)
-        endpoints = dispatcher.resolve_tunnel_endpoints()
+        endpoints = dispatcher.resolve_tunnel_endpoints(conf)
         base_url = endpoints[0]['base_url']
         init_completed = True
         force = False
