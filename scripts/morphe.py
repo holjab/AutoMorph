@@ -617,27 +617,22 @@ class Morphe:
                         continue
 
                     patch_name = patch_search.group(1).strip()
-                    package_names = re.findall(r"Package name:\s*(\S+)", block)
-                    version_search = re.search(r"Compatible versions:\s*(.+)", block)
+                    package_sections = re.split(r"Package name:\s*", block)[1:]
 
                     # 1. Parse versions (take the first listed compatible version or default to (0, 0, 0))
-                    if version_search:
-                        first_ver_line = version_search.group(1).strip().splitlines()[0]
-                        version_digits = re.findall(r"\d+", first_ver_line)
-                        tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
-                        ver_str = first_ver_line.strip() if version_digits else "0.0.0"
-                    else:
-                        tup_ver = (0, 0, 0)
-                        ver_str = "0.0.0"
-
                     # 2. Package-specific patches
-                    if package_names:
-                        for pkg in package_names:
+                    if package_sections:
+                        for section in package_sections:
+                            pkg = section.split()[0]
+                            version_search = re.search(r"Compatible versions:\s*(.+)", section)
+                            first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
+                            version_digits = re.findall(r"\d+", first_ver_line)
+                            tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
+                            ver_str = first_ver_line.strip() if version_digits else "0.0.0"
                             if pkg in enabled_patches_per_app:
                                 for alias, details in enabled_patches_per_app[pkg].items():
                                     if repo in details and details[repo] == patch_name:
                                         enabled_patches_per_app_versions.setdefault(pkg, {}).setdefault(alias, {})[repo] = (patch_name, tup_ver, ver_str)
-                    
                     # 3. Genuine universal patches (check if any configured app wants this patch)
                     else:
                         for app_pkg, aliases in enabled_patches_per_app.items():
@@ -758,12 +753,16 @@ class Morphe:
         output_dest = self.patched_dir / package_name / version_name / f"{package_name}_{version_name}_patched.apk"
         output_dest.parent.mkdir(parents=True, exist_ok=True)
         result_dest = output_dest.parent / "result.json"
-        input_package = self.original_dir / package_name / version_name / f"{package_name}.xapk"
+        version_dir = self.original_dir / package_name / version_name
+        candidate_names = (
+            f"{package_name}.xapk",
+            f"{package_name}.apk",
+            f"{package_name}-{version_name}.xapk",
+            f"{package_name}-{version_name}.apk",
+        )
+        input_package = next((version_dir / name for name in candidate_names if (version_dir / name).is_file()), None)
 
-        if not input_package.is_file():
-            input_package = self.original_dir / package_name / version_name / f"{package_name}.apk"
-
-        if not input_package.is_file():
+        if input_package is None:
             logger.error(f"No apk or xapk found for {package_name}, version: {version_name}")
             return False, dest, f"No APK or XAPK found for {package_name} v{version_name}"
 
