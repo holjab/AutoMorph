@@ -906,7 +906,7 @@ class Morphe:
         morphe = re.search(r"(\d+\.\d+\.\d+)", self.morphe_location.resolve().name) 
         morphe_version = morphe.group(1) if morphe else "Unknown"
 
-        patched_data.setdefault(package_name, {})[version_name] = {
+        patched_data.setdefault(package_name, {})[patched_version_name] = {
             'metadata': {
                 'time': timestamp,
                 'time_ms': time_ms
@@ -916,6 +916,7 @@ class Morphe:
                 'source_package_name': package_name,
                 'patched_package_name': patched_package_name,
                 'patched_version_name': str(patched_version_name),
+                'source_version_name': str(version_name),
                 'patched_version_code': int(patched_version_code),
                 'source_version_code': int(version_code),
                 'arch': self.arch,
@@ -953,12 +954,17 @@ class Morphe:
             
         return "Unable to find repo", None
 
-    def make_sha(self, item: Path) -> str:
+    def make_sha(self, item: Path | dict) -> str:
         sha = hashlib.sha256()
 
-        with open(item, "rb") as f:
-            while chunk := f.read(65536):
-                sha.update(chunk)
+        if isinstance(item, Path):
+            with open(item, "rb") as f:
+                while chunk := f.read(65536):
+                    sha.update(chunk)
+        elif isinstance(item, dict):
+            sha.update(json.dumps(item, sort_keys=True, default=str).encode("utf-8"))
+        else:
+            raise TypeError(f"make_sha expects Path or dict, got {type(item).__name__}")
 
         return sha.hexdigest()
 

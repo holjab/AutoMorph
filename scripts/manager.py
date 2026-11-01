@@ -106,11 +106,11 @@ class Obtanium:
             if not details:
                 continue
 
-            sorted_versions = sorted(details.keys(), key=lambda v: details[v]['package'].get('patched_version_code', details[v]['package'].get('source_version_code', 0)), reverse=True)
+            sorted_versions = sorted(details.keys(), key=lambda v: details[v]['package'].get('source_version_code', details[v]['package'].get('patched_version_code', 0)), reverse=True)
             latest_version = sorted_versions[0]
             latest_details = details[latest_version]
             patched_package_name = latest_details['package'].get('patched_package_name', package_name)
-            additional_settings = {'appIdOrName': patched_package_name, 'versionExtractionRegEx': r'\d+(\.\d+)+', 'pickHighestVersionCode': True}
+            additional_settings = {'appIdOrName': patched_package_name, 'versionExtractionRegEx': r'\d+(\.\d+)+'}
             apk_list = [[latest_details['file']['file_name'], latest_details['file']['url']]]
 
             app = {
@@ -154,8 +154,10 @@ class FDroid:
         for package_name, details in self.patched_results.items():
             if not details:
                 continue
+
+            sorted_details = sorted(details.items(), key=lambda item: item[1]['metadata'].get('time_ms', 0), reverse=True)
             
-            for version, v_details in details.items():
+            for version, v_details in sorted_details:
                 patched_package_name = v_details['package'].get('patched_package_name', package_name)
                 time = v_details['metadata'].get('time_ms')
           
@@ -187,7 +189,7 @@ class FDroid:
                     'manifest': {
                         'versionName': version,
                         'versionCode': v_details['package'].get('patched_version_code', v_details['package'].get('source_version_code', 0)),
-                        'nativeCode': [
+                        'nativecode': [
                             v_details['package'].get('arch')
                         ],
                         "usesSdk": {
