@@ -19,7 +19,9 @@ def main(project_root: Path, conf: dict) -> None:
     start_time = time.perf_counter()
     patch_success = {}
     patch_failures = {}
+    patched = {}
     init_completed = False
+    patch_executed = False
 
     interrupted = False
     try:
@@ -57,29 +59,35 @@ def main(project_root: Path, conf: dict) -> None:
 
         for package_name, details in download_list.items():
             scanned_repos = detailed_app_list[package_name]['repos']
-            result, dest, attempt_details, applied_repos, run, winning_attempt = patch_piepline(package_name, details, downlader, morphe, enabled_patches, patched_dir, striplibs, force)            
-        
-            resolved_applied = list(applied_repos) if applied_repos else list(scanned_repos)
+            result, attempt_details, patched_details = patch_piepline(package_name, details, downlader, morphe, enabled_patches, patched_dir, striplibs, force)            
+
+            resolved_applied = list(patched_details['repos']) if patched_details['repos'] else list(scanned_repos)
+                
             if not result:
                 logger.warning(f"[✗] Skipping {package_name}: patching could not be completed.")      
                 patch_failures[package_name] = {'target_versions': details.get('target_versions', []), 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'attempts': attempt_details}
                 continue       
 
-            patch_success[package_name] = {'dest': dest, 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': run, 'attempt': winning_attempt, 'attempts': attempt_details}
-
-            # clear_old_packages(package_name, max_original_packages, original_dir / package_name, "unpatched", project_root)
-            # clear_old_packages(package_name, max_patched_packages, patched_dir / package_name, "patched", project_root)
+            patch_success[package_name] = {'dest': patched_details['output_dest'], 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': patched_details['strat'], 'attempt': patched_details['attempt'], 'attempts': attempt_details}
+            
+            if patched_details['attempt'] is not None:
+                patched[package_name] = patched_details
+                patch_executed = True
     
     except KeyboardInterrupt:
         interrupted = True
         logger.critical("\n[!] Execution cancelled by user (SIGINT).")
         sys.exit(130)
+
     finally:
         if init_completed and not interrupted:
             duration_seconds = time.perf_counter() - start_time
             state_dir = project_root / "tools" / "automorph-data" / "state"
             patched_json = state_dir / "patched.json"
 
+            if patch_executed:
+                manager.main(patched, morphe.repo_details, morphe.detailed_patch_list, base_url, morphe.morphe_location, state_dir, architecture, morphe.enabled_patches_per_app)
+            
             manager.clean(max_original_packages, max_patched_packages, state_dir, original_dir, patched_dir, patched_json)
             manager.build_all_jsons(state_dir, patched_json, base_url)
 
@@ -249,7 +257,7 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
 
     return needs_patching
 
-def patch_piepline(package_name, details, downloader, morphe, enabled_patches, patched_dir, striplibs: bool, force: bool) -> tuple[bool, Path | None, list[dict], set | None, int | None, int | None]:
+def patch_piepline(package_name, details, downloader, morphe, enabled_patches, patched_dir, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
     targets = details['target_versions']
     patch_attempt = details.get('patch_attempt', 0)
     attempt_details = []
@@ -275,7 +283,7 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
 
         if patched_package.is_file() and not force:
             logger.info(f" └── [✓] {package_name} v{target_version} is already patched.")
-            return True, patched_package, attempt_details, None, None, None 
+            return True, attempt_details, {'repos': None, "strat": run, 'output_dest': patched_package, 'attempt': None}
 
         patch_list, dl_reason, package = downloader.download_package_main(package_name, target_version)
 
@@ -295,18 +303,19 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
             patch_attempt += 1
             continue
 
-        result, dest, patch_reason = morphe.patch(package_name, target_version, repos, options_to_use, run, patch_attempt, striplibs, package)
+        result, dest, patch_reason, time = morphe.patch(package_name, target_version, repos, options_to_use, striplibs, run)
         
         if result:
             winning_attempt = (patch_attempt + 1) if run == 1 else (patch_attempt - len(targets) + 1)
-            return True, dest, attempt_details, repos, run, winning_attempt
+            patched = {'version_name': target_version, 'repos': repos, 'strat': run, 'attempt': winning_attempt, 'options': options_to_use, 'output_dest': dest, 'results_dest': patch_reason, 'package': package, 'time': time}
+            return True, attempt_details, patched
 
         attempt_details.append({'version': target_version, 'run': run, 'stage': "Morphe Patching", 'reason': patch_reason or ("Incompatible bytecode" if run == 1 else "Fallback patch failure")})
 
         if run == 1:
             if dest == "one_repo" and len(targets) == 1:
                 logger.warning(f"\n[✗] Only attempt failed for {package_name} when attempting all enabled patches. No other versions to try.")
-                return False, None, attempt_details, None, None, None
+                return False, attempt_details, {'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
             
             if patch_attempt < len(targets) - 1:
                 logger.info(f" └── [!] Patch failed on v{target_version} with all enabled patches attempted. Falling back to next version...")
@@ -321,7 +330,7 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
         patch_attempt += 1
 
     logger.warning(f"\n[✗] All attempts failed for {package_name} when attempting to patch.")
-    return False, None, attempt_details, None, None, None
+    return False, attempt_details, {'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
 
 if __name__ == "__main__":
     project_root = Path(os.getenv("AUTOMORPH_ROOT", Path(__file__).resolve().parent.parent))
