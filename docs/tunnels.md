@@ -33,6 +33,11 @@ AutoMorph comes with built-in, first-class support for three tunnel providers. Y
   - [3.2 Route Traffic to AutoMorph](#32-route-traffic-to-automorph)
   - [3.3 Configure `.env`](#33-configure-env-2)
 - [Starting Services & Viewing Logs](#starting-services--viewing-logs)
+- [Tunnel Authentication & Mobile Apps (Cloudflare Access / Pangolin SSO)](#tunnel-authentication--mobile-apps-cloudflare-access--pangolin-sso)
+  - [1. Path Bypass Rules (Recommended)](#1-path-bypass-rules-recommended)
+  - [2. Extra Protection via Cloudflare WAF](#2-extra-protection-via-cloudflare-waf)
+  - [3. Private Tailscale Network (Zero Public Access)](#3-private-tailscale-network-zero-public-access)
+- [Repository Base URL & Ingress Selection (Optional)](#repository-base-url--ingress-selection-optional)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -168,6 +173,46 @@ After configuring your chosen tunnel in `.env`:
    # For Cloudflare
    docker compose logs -f cloudflared
    ```
+
+---
+
+## Tunnel Authentication & Mobile Apps (Cloudflare Access / Pangolin SSO)
+
+If you place your AutoMorph domain behind an identity provider or login screen (such as **Cloudflare Zero Trust Access** or **Pangolin SSO / Authelia**), your web browser logs in via email PIN or Google/GitHub authentication.
+
+However, mobile background updaters like **Obtainium** and **Neo Store** are automated tools, not interactive web browsers. When they query your repository or attempt to download an APK, the tunnel intercepts their request with an HTML login page, causing downloads to fail.
+
+> [!NOTE]
+> Because AutoMorph feeds integrate with Obtainium as an **F-Droid repository**, Obtainium does not offer a custom request headers option for this source (in Obtainium, custom headers are only supported on HTML and direct link sources). Therefore, mobile updaters cannot pass login cookies or service tokens.
+
+To allow mobile app updates without compromising your server's security, use one of the strategies below:
+
+### 1. Path Bypass Rules (Recommended)
+
+Add a **Bypass** policy in your tunnel provider for only the two paths needed by your phone:
+
+* **Paths to Bypass**:
+  * `/files/*` (the APK downloads)
+  * `/index-v2.json` (the repository index that tells your phone when an update is available)
+* **What stays protected**: Your root dashboard (`/`), admin APIs (`/api/*`), build triggers, settings, and live console remain 100% protected behind your SSO login screen.
+* **Is `/files/*` open to directory browsing?**: **No.** AutoMorph does not expose directory listings under `/files/*` (visiting any folder directly redirects into the dashboard). An outsider cannot see or browse what files exist unless they already know the exact package name, version, and APK filename.
+
+### 2. Extra Protection via Cloudflare WAF
+
+If you use Cloudflare and want extra protection on the bypassed `/files/*` path without breaking mobile updates, you can use Cloudflare's **WAF (Web Application Firewall)**:
+
+* In your Cloudflare Dashboard, go to **Security** › **WAF** › **Custom Rules**.
+* Create a rule targeting the download path:
+  * **Country Restriction**: Restrict downloads to your own country (e.g. `(http.request.uri.path contains "/files/" and ip.geoip.country ne "GB") -> Block`).
+  * **Rate Limiting**: Add a rate-limiting rule to block any IP address making more than 15–20 requests per minute.
+  * **Bot Fight Mode**: Enable Cloudflare's automated bot protection to block automated web crawlers.
+
+### 3. Private Tailscale Network (Zero Public Access)
+
+If you do not want any public internet exposure at all:
+* Use **Tailscale Serve** (private mesh) instead of a public tunnel or Funnel.
+* Install the Tailscale app on your phone and connect to your tailnet.
+* Your phone talks directly to AutoMorph's private node address (e.g. `http://automorph.tailnet.ts.net:8080`) over an encrypted WireGuard tunnel without needing any public bypasses or login screens.
 
 ---
 

@@ -272,6 +272,10 @@ If you'd like to import all your patched apps into Obtainium at once:
 > [!TIP]
 > If your server is running on `localhost:8080` without any tunnel configured, mobile devices won't be able to reach download links. Simply select your tunnel or LAN URL under **Settings** › **External URL / Access Mode**.
 
+> [!IMPORTANT]
+> **Using Cloudflare Zero Trust or Pangolin SSO?**
+> If your AutoMorph instance is protected behind a login screen, mobile background updaters cannot solve the login prompt and will fail to download. You must add a **Bypass Rule** for `/files/*` and `/index-v2.json` in your tunnel provider. See the [Remote Access & Tunnels Guide](tunnels.md#tunnel-authentication--mobile-apps-cloudflare-access--pangolin-sso) for instructions.
+
 ### 9.3 Adding AutoMorph as an F-Droid Repository (Obtainium & Neo Store)
 
 You can also add AutoMorph as an F-Droid repository feed directly in **Obtainium** or **Neo Store**:
