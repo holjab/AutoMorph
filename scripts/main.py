@@ -5,15 +5,13 @@ import re
 from downloader import Downloader
 from morphe import Morphe
 from dotenv import load_dotenv
-from logger import logger_init, remove_log
+from logger import logger_init
 import dispatcher
 import time
 import sys
 import apkpure_fetcher
 import logging
-import itertools
-import shutil
-import json
+import manager
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +19,15 @@ def main(project_root: Path, conf: dict) -> None:
     start_time = time.perf_counter()
     patch_success = {}
     patch_failures = {}
+    patched = {}
     init_completed = False
+    patch_executed = False
 
     interrupted = False
     try:
         original_dir, patched_dir, architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = init(project_root, conf)
+        endpoints = dispatcher.resolve_tunnel_endpoints(conf)
+        base_url = endpoints[0]['base_url']
         init_completed = True
         force = False
 
@@ -40,7 +42,7 @@ def main(project_root: Path, conf: dict) -> None:
             else:
                 logger.warning(f"[!] Target package '{target_pkg}' not found in configured apps list.")
         
-        morphe = Morphe(project_root, original_dir, patched_dir, architecture, detailed_app_list, repo_details, low_spec_mode, force)
+        morphe = Morphe(project_root, original_dir, patched_dir, architecture, detailed_app_list, repo_details, low_spec_mode, force, base_url)
         downlader = Downloader(original_dir, architecture, project_root)
         
         result = morphe.package_req_main()
@@ -57,28 +59,37 @@ def main(project_root: Path, conf: dict) -> None:
 
         for package_name, details in download_list.items():
             scanned_repos = detailed_app_list[package_name]['repos']
-            result, dest, attempt_details, applied_repos, run, winning_attempt = patch_piepline(package_name, details, downlader, morphe, enabled_patches, patched_dir, striplibs, force)            
-        
-            resolved_applied = list(applied_repos) if applied_repos else list(scanned_repos)
+            result, attempt_details, patched_details = patch_piepline(package_name, details, downlader, morphe, enabled_patches, patched_dir, striplibs, force)            
+
+            resolved_applied = list(patched_details['repos']) if patched_details['repos'] else list(scanned_repos)
+                
             if not result:
                 logger.warning(f"[✗] Skipping {package_name}: patching could not be completed.")      
                 patch_failures[package_name] = {'target_versions': details.get('target_versions', []), 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'attempts': attempt_details}
                 continue       
 
-            patch_success[package_name] = {'dest': dest, 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': run, 'attempt': winning_attempt, 'attempts': attempt_details}
-
-            # clear_old_packages(package_name, max_original_packages, original_dir / package_name, "unpatched", project_root)
-            # clear_old_packages(package_name, max_patched_packages, patched_dir / package_name, "patched", project_root)
+            patch_success[package_name] = {'dest': patched_details['output_dest'], 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': patched_details['strat'], 'attempt': patched_details['attempt'], 'attempts': attempt_details}
+            
+            if patched_details['attempt'] is not None:
+                patched[package_name] = patched_details
+                patch_executed = True
     
     except KeyboardInterrupt:
         interrupted = True
         logger.critical("\n[!] Execution cancelled by user (SIGINT).")
         sys.exit(130)
+
     finally:
         if init_completed and not interrupted:
             duration_seconds = time.perf_counter() - start_time
+            state_dir = project_root / "tools" / "automorph-data" / "state"
+            patched_json = state_dir / "patched.json"
 
-            clear_old_packages(max_original_packages, max_patched_packages, project_root, original_dir, patched_dir)
+            if patch_executed:
+                manager.main(patched, morphe.repo_details, morphe.detailed_patch_list, base_url, morphe.morphe_location, state_dir, architecture, morphe.enabled_patches_per_app)
+            
+            manager.clean(max_original_packages, max_patched_packages, state_dir, original_dir, patched_dir, patched_json)
+            manager.build_all_jsons(state_dir, patched_json, base_url)
 
             dispatcher.main(
                 patch_success,
@@ -148,11 +159,11 @@ def parse_yaml(conf: dict) -> tuple:
 
         patch_aliases = package.get('patch_aliases') or []
 
-        for aliase in patch_aliases:
-            if not aliase:
+        for alias in patch_aliases:
+            if not alias:
                 continue
-            aliase_name = aliase.get('name')
-            aliases = aliase.get('aliases') or []
+            aliase_name = alias.get('name')
+            aliases = alias.get('aliases') or []
             for al in aliases:
                 if al:
                     aliase_map[al] = aliase_name
@@ -246,7 +257,7 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
 
     return needs_patching
 
-def patch_piepline(package_name, details, downloader, morphe, enabled_patches, patched_dir, striplibs: bool, force: bool) -> tuple[bool, Path | None, list[dict], set | None, int | None, int | None]:
+def patch_piepline(package_name, details, downloader, morphe, enabled_patches, patched_dir, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
     targets = details['target_versions']
     patch_attempt = details.get('patch_attempt', 0)
     attempt_details = []
@@ -272,9 +283,9 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
 
         if patched_package.is_file() and not force:
             logger.info(f" └── [✓] {package_name} v{target_version} is already patched.")
-            return True, patched_package, attempt_details, None, None, None 
+            return True, attempt_details, {'repos': None, "strat": run, 'output_dest': patched_package, 'attempt': None}
 
-        patch_list, dl_reason = downloader.download_package_main(package_name, target_version)
+        patch_list, dl_reason, package = downloader.download_package_main(package_name, target_version)
 
         if not patch_list:
             logger.warning(f" └── [!] Base APK download/verification failed for v{target_version}.")
@@ -292,18 +303,19 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
             patch_attempt += 1
             continue
 
-        result, dest, patch_reason = morphe.patch(package_name, target_version, repos, options_to_use, run, patch_attempt, striplibs)
+        result, dest, patch_reason, time = morphe.patch(package_name, target_version, repos, options_to_use, striplibs, run)
         
         if result:
             winning_attempt = (patch_attempt + 1) if run == 1 else (patch_attempt - len(targets) + 1)
-            return True, dest, attempt_details, repos, run, winning_attempt
+            patched = {'version_name': target_version, 'repos': repos, 'strat': run, 'attempt': winning_attempt, 'options': options_to_use, 'output_dest': dest, 'results_dest': patch_reason, 'package': package, 'time': time}
+            return True, attempt_details, patched
 
         attempt_details.append({'version': target_version, 'run': run, 'stage': "Morphe Patching", 'reason': patch_reason or ("Incompatible bytecode" if run == 1 else "Fallback patch failure")})
 
         if run == 1:
             if dest == "one_repo" and len(targets) == 1:
                 logger.warning(f"\n[✗] Only attempt failed for {package_name} when attempting all enabled patches. No other versions to try.")
-                return False, None, attempt_details, None, None, None
+                return False, attempt_details, {'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
             
             if patch_attempt < len(targets) - 1:
                 logger.info(f" └── [!] Patch failed on v{target_version} with all enabled patches attempted. Falling back to next version...")
@@ -318,111 +330,7 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
         patch_attempt += 1
 
     logger.warning(f"\n[✗] All attempts failed for {package_name} when attempting to patch.")
-    return False, None, attempt_details, None, None, None
-
-def clear_old_packages(max_original_packages: int, max_patched_packages:int, project_root: Path, original_dir: Path, patched_dir: Path) -> None:
-    if not max_original_packages and not max_patched_packages:
-        return
-    
-    patched_json = project_root / "tools" / "automorph-data" / "state"  / "patched.json"
-    json_results = None
-    json_results = load_patched_json(patched_json)
-
-    if not json_results:
-        return
-
-    for package_name in json_results:
-        logger.info(f"\n[*] {max_original_packages} unpatched and {max_patched_packages} package(s) allowed on disk. Checking for {package_name}...")
-        details = {'patched': {'directory': patched_dir / package_name, 'max_packages': max_patched_packages}, 'original': {'directory': original_dir / package_name, 'max_packages': max_original_packages}}
-
-        for key, values in details.items():
-            if not values['max_packages']:
-                continue
-
-            directory = values['directory']
-            if not directory.is_dir():
-                continue
-
-            version_folders = [d for d in directory.iterdir() if d.is_dir()]
-
-            used_folders = [
-            folder for folder in version_folders 
-            if any(itertools.chain(folder.glob("*.xapk"), folder.rglob("*.apk")))
-            ]
-
-            if key == 'patched':
-                check_patched_json(package_name, used_folders, json_results, patched_json)
-
-            check_packages(package_name, values['max_packages'], key, version_folders, used_folders, patched_json, json_results)
-
-def check_packages(package_name: str, max_packages: int, id: str, version_folders: list, used_folders: list, patched_json: Path, json_results: dict) -> None:
-    if len(version_folders) <= max_packages:
-        logger.info(f" └── [✓] {len(version_folders)} {id} package(s) found. No deletions required.")
-        return
-
-    if len(used_folders) <= max_packages:
-        logger.info(f" └── [✓] {len(used_folders)} {id} package(s) found. No deletions required.")
-        return
-
-    used_folders.sort(key=lambda folder: tuple(int(d) for d in folder.name.split('.') if d.isdigit()))
-    remove_from_json = []
-
-    while len(used_folders) > max_packages:
-        count = len(used_folders)
-        oldest_package = used_folders.pop(0)
-        branch = " └── " if len(used_folders) == max_packages else " ├── "
-        logger.info(f"{branch}[!] {count} {id} packages found, removing the oldest: v{oldest_package.name.lstrip('v')}")
-        shutil.rmtree(oldest_package)
-        if id == 'patched':
-            remove_from_json.append(oldest_package.name)
-
-    if id == 'patched' and remove_from_json:
-        if not json_results:
-            json_results = load_patched_json(patched_json)
-
-        if json_results:
-            rm_from_patched_json(remove_from_json, package_name, json_results, patched_json)
-
-def check_patched_json(package_name: str, used_folders: list, json_results: dict, patched_json: Path) -> None:
-    versions = json_results.get(package_name)
-    if versions:
-        used_versions = [x.name for x in used_folders]
-        remove_from_json = [version for version in versions if version not in used_versions]
-        
-        if remove_from_json:
-            rm_from_patched_json(remove_from_json, package_name, json_results, patched_json)
-
-def rm_from_patched_json(version_names: list, package_name: str, json_results: dict, patched_json: Path) -> None:
-    package_data = json_results.get(package_name)
-
-    if not isinstance(package_data, dict):
-        logger.warning(f"Package '{package_name}' not found or invalid format.")
-        return
-
-    to_remove = False
-
-    for version_name in version_names:
-        if package_data.pop(version_name, None) is not None:
-            to_remove = True
-
-    if to_remove:
-        if not package_data:
-            json_results.pop(package_name, None)
-
-        with open(patched_json, "w", encoding="utf-8") as f:
-            json.dump(json_results, f, indent=2)
-
-def load_patched_json(patched_json: Path) -> dict | None:
-    try:
-        with open(patched_json, "r", encoding="utf-8") as r:
-            results = json.load(r)
-            return results
-    except FileNotFoundError:
-        logger.warning(f"File not found: {patched_json}")
-        return
-    except json.JSONDecodeError:
-        logger.warning(f"Unable to parse invalid JSON in {patched_json}")
-        return
+    return False, attempt_details, {'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
 
 if __name__ == "__main__":
     project_root = Path(os.getenv("AUTOMORPH_ROOT", Path(__file__).resolve().parent.parent))
@@ -434,7 +342,7 @@ if __name__ == "__main__":
     with config_file.open("r", encoding="utf-8") as f:
       conf = yaml.safe_load(f) or {}
 
-    max_logs = conf.get("max_logs", 5)
+    max_logs = conf.get("max_logs")
 
     logger, log_dir = logger_init(project_root)
 
@@ -445,4 +353,5 @@ if __name__ == "__main__":
         logger.exception("Pipeline crashed with an unhandled error: %s", e)
         raise
     finally:
-        remove_log(log_dir, max_logs)
+        if max_logs:
+            manager.clear_logs(log_dir, max_logs)

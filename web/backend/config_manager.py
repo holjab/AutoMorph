@@ -11,6 +11,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 import re
 import shutil
@@ -305,7 +306,8 @@ def get_last_patch_result(package: str, patched_registry: dict[str, Any] | None 
         for ver_name, ver_info in pkg_entry.items():
             if not isinstance(ver_info, dict):
                 continue
-            loc_str = str(ver_info.get("location") or "")
+            file_meta = ver_info.get("file", {}) if isinstance(ver_info.get("file"), dict) else {}
+            loc_str = str(file_meta.get("location") or ver_info.get("location") or "")
             loc = Path(loc_str) if loc_str else None
             if not loc or not loc.is_file():
                 # Fallback to standard app location if path moved
@@ -313,7 +315,8 @@ def get_last_patch_result(package: str, patched_registry: dict[str, Any] | None 
                 if candidate.is_file():
                     loc = candidate
             if loc and loc.is_file():
-                t_str = ver_info.get("time", "")
+                meta_dict = ver_info.get("metadata", {}) if isinstance(ver_info.get("metadata"), dict) else {}
+                t_str = meta_dict.get("time") or ver_info.get("time", "")
                 t_val = 0.0
                 if t_str:
                     try:
@@ -331,10 +334,12 @@ def get_last_patch_result(package: str, patched_registry: dict[str, Any] | None 
 
         # If there is no more recent failure, return the fast-path result directly!
         if not has_newer_failure:
-            applied_dict = best_info.get("applied_patches") or {}
+            patch_data = best_info.get("patch", {}) if isinstance(best_info.get("patch"), dict) else {}
+            applied_dict = patch_data.get("applied_patches") or best_info.get("applied_patches") or {}
             patch_owners = {}
             norm_applied = []
-            for p_name, r_url in applied_dict.items():
+            for p_name, r_val in applied_dict.items():
+                r_url = r_val.get("repo") if isinstance(r_val, dict) else r_val
                 owner = _extract_repo_owner(r_url)
                 patch_owners[p_name] = owner
                 norm_applied.append({
@@ -343,12 +348,12 @@ def get_last_patch_result(package: str, patched_registry: dict[str, Any] | None 
                     "options": None,
                 })
 
-            strat = best_info.get("strat", 1)
+            strat = patch_data.get("strat") or best_info.get("strat", 1)
             strat_num = int(strat) if str(strat).isdigit() else 1
             strat_name = "Strategy 1 (All Repos)" if strat_num == 1 else "Strategy 2 (Version-Compatible)"
-            attempt_num = best_info.get("attempt", 1)
+            attempt_num = patch_data.get("attempt") or best_info.get("attempt", 1)
             attempt_val = int(attempt_num) if str(attempt_num).isdigit() else 1
-            repos = [str(r).strip() for r in (best_info.get("repos") or []) if str(r).strip()]
+            repos = [str(r).strip() for r in (patch_data.get("repos") or best_info.get("repos") or []) if str(r).strip()]
 
             detailed_attempts = []
             if report_attempts:
@@ -409,7 +414,7 @@ def get_last_patch_result(package: str, patched_registry: dict[str, Any] | None 
                 "failed_patches": [],
                 "applied_count": len(norm_applied),
                 "failed_count": 0,
-                "sha256": best_info.get("sha256"),
+                "sha256": (best_info.get("file", {}).get("sha256") if isinstance(best_info.get("file"), dict) else None) or best_info.get("sha256"),
                 "timestamp": int(effective_time),
                 "timestamp_formatted": dt.strftime("%b %d, %H:%M"),
             }
@@ -1161,6 +1166,24 @@ def get_all_settings() -> dict[str, Any]:
     except (ValueError, TypeError):
         max_patched_packages = None
 
+    scripts_dir = str(PROJECT_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import dispatcher
+
+    available_endpoints = dispatcher.get_all_ingress_endpoints(data)
+    resolved_endpoints = dispatcher.resolve_tunnel_endpoints(data)
+    active_base_url = resolved_endpoints[0]["base_url"] if resolved_endpoints else "http://localhost:8080"
+    active_endpoint_id = resolved_endpoints[0]["id"] if resolved_endpoints else "local"
+
+    saved_preferred = str(data.get("preferred_endpoint") or "").strip().lower()
+    effective_preferred = saved_preferred if (saved_preferred and saved_preferred != "auto") else active_endpoint_id
+
+    raw_custom = data.get("custom_base_url") or data.get("base_url")
+    if raw_custom is None:
+        raw_custom = os.getenv("BASE_URL") or os.getenv("EXTERNAL_URL") or ""
+    custom_base_url = str(raw_custom).strip()
+
     return {
         "system": {
             "architecture": str(data.get("architecture") or "arm64-v8a"),
@@ -1172,6 +1195,12 @@ def get_all_settings() -> dict[str, Any]:
             "max_logs": max_logs,
             "max_original_packages": max_original_packages,
             "max_patched_packages": max_patched_packages,
+            "preferred_endpoint": effective_preferred,
+            "active_endpoint_id": active_endpoint_id,
+            "custom_base_url": custom_base_url,
+            "base_url": active_base_url,
+            "active_base_url": active_base_url,
+            "available_endpoints": available_endpoints,
         },
         "tunnels": {
             "tailscale": {
@@ -1234,7 +1263,44 @@ def update_system_settings(settings: dict[str, Any]) -> dict[str, Any]:
         except (ValueError, TypeError):
             data["max_patched_packages"] = None
 
+    if "preferred_endpoint" in settings:
+        pref = str(settings["preferred_endpoint"]).strip().lower() if settings["preferred_endpoint"] else "auto"
+        data["preferred_endpoint"] = pref
+
+    if "custom_base_url" in settings or "base_url" in settings:
+        raw_val = settings.get("custom_base_url") if "custom_base_url" in settings else settings.get("base_url")
+        val = str(raw_val).strip() if raw_val is not None else ""
+        data.pop("base_url", None)
+        if val:
+            data["custom_base_url"] = val
+            os.environ["BASE_URL"] = val
+        else:
+            data["custom_base_url"] = None
+            os.environ.pop("BASE_URL", None)
+
+        env_file = PROJECT_ROOT / ".env"
+        if env_file.is_file():
+            try:
+                from dotenv import set_key
+                set_key(str(env_file), "BASE_URL", val)
+            except Exception as e:
+                logger.warning(f"Could not write BASE_URL to .env: {e}")
+
     save_config_raw(yaml, data)
+
+    if PATCHED_JSON_PATH.is_file():
+        try:
+            scripts_dir = str(PROJECT_ROOT / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import dispatcher
+            import manager
+            endpoints = dispatcher.resolve_tunnel_endpoints(data)
+            active_base_url = endpoints[0]["base_url"] if endpoints else "http://localhost:8080"
+            manager.build_all_jsons(STATE_DIR, PATCHED_JSON_PATH, active_base_url)
+        except Exception as e:
+            logger.warning(f"Could not rebuild Obtainium/FDroid JSONs after settings update: {e}")
+
     return get_all_settings()["system"]
 
 

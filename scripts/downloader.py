@@ -25,18 +25,35 @@ class Downloader:
 
     def download_package_main(self, package_name: str, target_version: str) -> tuple[dict | None, str | None]: 
         logger.info(f"\n[*] {package_name} | v{target_version} ({self.architecture})")
-        
+
+        package = {}
         outer_dir = self.make_dir(package_name, target_version)
         split_dir = outer_dir / f"{package_name}"
 
-        if self.check_exists(outer_dir, self.architecture, target_version, package_name, split_dir):
+        exists, version_code = self.check_exists(outer_dir, self.architecture, target_version, package_name, split_dir)
+
+        if exists:
             patch_details = {"package_name": package_name, "version_name": target_version, "arch": self.architecture, 'patch_attempt': 0}
             logger.info(f" └── [✓] {package_name} v{target_version} already exists with correct arch.")
-            return patch_details, f"{package_name} already exists"
+            package = {package_name: {target_version: {'version_code': version_code, 'arch': self.architecture}}}
+            return patch_details, f"{package_name} already exists", package
 
         result = apkpure_fetcher.process_package(package_name, target_version, self.architecture, self.sources_file)
+        package = self.package_details(result)
         patch_list, reason = self.download_package(result, outer_dir, split_dir)
-        return patch_list, reason
+        return patch_list, reason, package
+
+    def package_details(self, result: dict):
+        package = {
+            result['package_name']: {
+                result['versionname']: {
+                    'version_code': result['versioncode'],
+                    'arch': result['arch']
+                }
+            }
+        }
+
+        return package
 
     def download_package(self, result: dict, outer_dir: Path, split_dir: Path) -> tuple[dict | None, str | None]: 
         success, reason = False, None
@@ -243,9 +260,7 @@ class Downloader:
 
         if source == "apkpure":
             is_xapk = "/XAPK/" in url
-            dest_file = (
-                outer_dir / f"{package_name}-{version_name}.{'xapk' if is_xapk else 'apk'}"
-            )
+            dest_file = outer_dir / f"{package_name}.{'xapk' if is_xapk else 'apk'}"
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101"
@@ -308,7 +323,7 @@ class Downloader:
 #            CHECKS             #
 #################################
 
-    def check_exists(self, outer_dir: Path, arch: str, version_name: str, package_name: str, split_dir: Path) -> bool:
+    def check_exists(self, outer_dir: Path, arch: str, version_name: str, package_name: str, split_dir: Path) -> tuple[bool, str]:
         xapks = list(outer_dir.glob("*.xapk"))
 
         if split_dir.exists() and not xapks:
@@ -323,7 +338,7 @@ class Downloader:
                     xapk.replace(new_apk)
                     xapk = new_apk
                 if xapk_result:
-                    return True           
+                    return True, xapk_reason           
                 logger.warning(f" └── [!] XAPK check failed: {xapk_reason}")
         
         apks = list(outer_dir.glob("*.apk"))
@@ -332,12 +347,12 @@ class Downloader:
             for apk in apks:
                 apk_result, apk_reason = self.check_apk(apk, arch, version_name, package_name)
                 if apk_result:
-                    return True
+                    return True, apk_reason
                 logger.warning(f" └── [!] APK check failed: {apk_reason}")
         
-        return False
+        return False, None
         
-    def check_xapk(self, xapk: Path, arch: str, version_name: str, package_name: str) -> tuple[bool, str | None]:
+    def check_xapk(self, xapk: Path, arch: str, version_name: str, package_name: str) -> tuple[bool, str]:
         is_apk, reason = self.is_apk(xapk)
 
         if is_apk:
@@ -348,7 +363,7 @@ class Downloader:
         if arch_result:
             version_result, reason = self.check_xapk_version(xapk, version_name, package_name)
             if version_result:
-                return True, "success"
+                return True, reason
 
         return False, reason 
 
@@ -363,7 +378,7 @@ class Downloader:
                     return True, "is_apk"
                 return False, "is_xapk"
             
-        except BadZipFile:  #[cite: 1]
+        except BadZipFile:
             return False, "bad_zip"
 
     def check_xapk_arch(self, xapk: Path, arch: str) -> tuple[bool, str | None]:
@@ -421,7 +436,8 @@ class Downloader:
                         
                         if detected_version == version_name or normalised_detected_version == version_name:
                             logger.info(f" ├── Base APK matches target version ({version_name})")
-                            return True, None
+                            version_code = APK(apk_bytes, raw=True).version_code
+                            return True, version_code
                     except Exception:
                         continue
 
@@ -440,7 +456,7 @@ class Downloader:
         if arch_result:
             version_result, reason = self.apk_version(apk, version_name)
             if version_result:
-                return True, "success"
+                return True, reason
         return False, reason
 
     def apk_arch(self, apk: Path, arch: str) -> tuple[bool, str | None]:
@@ -467,7 +483,8 @@ class Downloader:
 
         if detected_version == target_version or normalise_detected_version == target_version:
             logger.info(f" ├── [✓] Base APK matches target version ({target_version})")
-            return True, None
+            version_code = APK(package).version_code
+            return True, version_code
         if detected_version is None or normalise_detected_version is None:
             logger.error(f" ├── [✗] Failed to parse manifest for {package.name}")
             return False, "unparseable_version"

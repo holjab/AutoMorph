@@ -34,6 +34,9 @@
   --color-warning: #f59e0b;
   --color-danger: #f43f5e;
   --color-info: #38bdf8;
+  
+  /* Obtainium Icon Size (edit here or via browser devtools) */
+  --obtainium-icon-size: 17px;
 
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
@@ -239,6 +242,11 @@ body::after {
   gap: 12px;
 }
 
+.nav-actions .btn {
+  height: 38px;
+  box-sizing: border-box;
+}
+
 /* ==========================================================================
    Buttons & Badges
    ========================================================================== */
@@ -295,6 +303,8 @@ body::after {
 .btn-sm {
   padding: 6px 12px;
   font-size: 0.8125rem;
+  min-height: 38px;
+  box-sizing: border-box;
 }
 
 .btn-icon-only {
@@ -368,6 +378,11 @@ body::after {
   margin-bottom: 24px;
   flex-wrap: wrap;
   gap: 16px;
+}
+
+.hero-header .btn {
+  height: 38px;
+  box-sizing: border-box;
 }
 
 .hero-title-area h1 {
@@ -2139,17 +2154,31 @@ body {
   }
   
   .nav-actions {
-    gap: 4px !important;
+    gap: 6px !important;
     flex-shrink: 0 !important;
   }
 
   .nav-actions .btn {
-    padding: 6px 8px !important;
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+    flex-shrink: 0 !important;
   }
   
   /* Collapse button text in navbar, showing only icons */
   .nav-actions .btn span:not(.material-symbols-rounded) {
     display: none !important;
+  }
+
+  .nav-actions .btn .obtainium-svg-icon {
+    width: var(--obtainium-icon-size, 17px) !important;
+    height: var(--obtainium-icon-size, 17px) !important;
+    display: block !important;
   }
 
   #status-badge #status-badge-text {
@@ -2894,4 +2923,82 @@ body {
 #site-version-tag:hover {
   border-color: var(--primary-cyan) !important;
 }
+
+/* ==========================================================================
+   Obtainium Integration Modal & QR Code
+   ========================================================================== */
+#obtainium-qr-container {
+  width: 200px !important;
+  height: 200px !important;
+  position: relative;
+  overflow: hidden;
+  margin: 0 auto;
+}
+
+#obtainium-qr-container canvas,
+#obtainium-qr-container img {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  width: 200px !important;
+  height: 200px !important;
+  max-width: 200px !important;
+  max-height: 200px !important;
+  display: block;
+  margin: 0 auto;
+}
+
+#obtainium-qr-container canvas[style*="none"],
+#obtainium-qr-container img[style*="none"] {
+  display: none !important;
+}
+
+.obtainium-svg-icon {
+  width: var(--obtainium-icon-size, 17px);
+  height: var(--obtainium-icon-size, 17px);
+  display: block;
+  fill: var(--primary-cyan);
+  flex-shrink: 0;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.btn .obtainium-svg-icon,
+.btn-sm .obtainium-svg-icon {
+  width: var(--obtainium-icon-size, 17px);
+  height: var(--obtainium-icon-size, 17px);
+  display: block;
+}
+
+.card-actions-group .btn .obtainium-svg-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.modal-title .obtainium-svg-icon {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.btn:hover .obtainium-svg-icon {
+  filter: drop-shadow(0 0 6px rgba(32, 207, 206, 0.45));
+}
+
+
+.obtainium-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(32, 207, 206, 0.1);
+  color: var(--primary-cyan);
+  border: 1px solid rgba(32, 207, 206, 0.25);
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+
+
 

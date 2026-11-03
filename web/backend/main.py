@@ -12,21 +12,28 @@ import json
 import logging
 import os
 from pathlib import Path
+import sys
 import time
 from typing import Any
+import urllib.parse
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import config_manager, mutex, options_manager, update_checker
 from .runner import runner
 
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("automorph.api")
 
 app = FastAPI(title="AutoMorph Management API", version="2.1.0")
+
+# Enable gzip compression for responses >= 1000 bytes (e.g. 3.6MB catalog -> ~250KB)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Allow CORS for development or external ingress
 app.add_middleware(
@@ -99,6 +106,9 @@ class SystemSettingsRequest(BaseModel):
     max_logs: int | None = None
     max_original_packages: int | None = None
     max_patched_packages: int | None = None
+    preferred_endpoint: str | None = None
+    custom_base_url: str | None = None
+    base_url: str | None = None
 
 
 class TunnelsSettingsRequest(BaseModel):
@@ -224,7 +234,8 @@ def get_storage_stats() -> dict[str, Any]:
             if isinstance(versions, dict):
                 for ver, info in versions.items():
                     if isinstance(info, dict):
-                        loc_str = str(info.get("location") or "")
+                        file_info = info.get("file", {}) if isinstance(info.get("file"), dict) else {}
+                        loc_str = str(file_info.get("location") or info.get("location") or "")
                         loc = Path(loc_str) if loc_str else None
                         if not loc or not loc.is_file():
                             candidate = patched_dir / pkg / ver / f"{pkg}_{ver}_patched.apk"
@@ -444,7 +455,7 @@ async def get_catalog(refresh: bool = False) -> Response:
         import apkpure_fetcher
 
         data = apkpure_fetcher.get_morphe_catalog(force_refresh=refresh)
-        return JSONResponse(data)
+        return JSONResponse(data, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     except Exception as e:
         logger.error(f"Error fetching catalog: {e}", exc_info=True)
         try:
@@ -453,7 +464,7 @@ async def get_catalog(refresh: bool = False) -> Response:
             if catalog_file.is_file():
                 with open(catalog_file, "r", encoding="utf-8") as f:
                     raw = json.load(f)
-                    return JSONResponse(apkpure_fetcher.enrich_morphe_catalog(raw))
+                    return JSONResponse(apkpure_fetcher.enrich_morphe_catalog(raw), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(e))
@@ -610,7 +621,7 @@ async def download_server_options(package: str, req: DownloadOptionsRequest | No
     try:
         repos = req.repos if req else []
         force = req.force if req else False
-        res = options_manager.ensure_app_options(package, repos=repos, force=force)
+        res = await asyncio.to_thread(options_manager.ensure_app_options, package, repos=repos, force=force)
         return res
     except Exception as e:
         logger.error(f"Error ensuring options on server for {package}: {e}", exc_info=True)
@@ -876,6 +887,209 @@ async def serve_patched_files(request: Request, subpath: str = "") -> Response:
     redirect_target = f"/#/files/{rel_path}" if rel_path else "/#/files"
     return RedirectResponse(url=redirect_target, status_code=status.HTTP_302_FOUND)
 
+
+# ---------------------------------------------------------------------------
+# Obtainium & F-Droid Integration Endpoints
+# ---------------------------------------------------------------------------
+
+def _get_base_url(request: Request) -> str:
+    """Detects external public base URL from settings, headers, tunnels, or fallback."""
+    try:
+        cfg_settings = config_manager.get_all_settings()
+        custom_base = cfg_settings.get("system", {}).get("base_url")
+        if custom_base:
+            scripts_dir = str(PROJECT_ROOT / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import dispatcher
+            return dispatcher.normalize_base_url(custom_base)
+    except Exception:
+        pass
+
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    if host and "localhost" not in host and "127.0.0.1" not in host:
+        return f"{proto}://{host}".rstrip("/")
+    try:
+        scripts_dir = str(PROJECT_ROOT / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import dispatcher
+        endpoints = dispatcher.resolve_tunnel_endpoints()
+        if endpoints and endpoints[0].get("base_url"):
+            return endpoints[0]["base_url"].rstrip("/")
+    except Exception:
+        pass
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _ensure_obtainium_files(base_url: str) -> tuple[Path, Path]:
+    """Ensures index-v2.json and obtainium-export.json are present and match current base_url."""
+    state_dir = PROJECT_ROOT / "tools" / "automorph-data" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    export_file = state_dir / "obtainium-export.json"
+    index_file = state_dir / "index-v2.json"
+    patched_json = state_dir / "patched.json"
+
+    needs_rebuild = False
+    if not export_file.is_file() or not index_file.is_file():
+        needs_rebuild = True
+    else:
+        try:
+            with open(index_file, "r", encoding="utf-8") as f:
+                idx = json.load(f)
+                if idx.get("repo", {}).get("address") != base_url:
+                    needs_rebuild = True
+        except Exception:
+            needs_rebuild = True
+
+    if needs_rebuild and patched_json.is_file():
+        try:
+            scripts_dir = str(PROJECT_ROOT / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import manager
+            manager.build_all_jsons(state_dir, patched_json, base_url)
+        except Exception as e:
+            logger.error(f"Error auto-generating Obtainium/FDroid JSONs: {e}")
+
+    return export_file, index_file
+
+
+@app.get("/index-v2.json")
+@app.get("/repo/index-v2.json")
+@app.get("/fdroid/repo/index-v2.json")
+async def serve_fdroid_index(request: Request):
+    """
+    Serves the F-Droid v2 repository index for Obtainium and F-Droid clients.
+    """
+    base_url = _get_base_url(request)
+    _, index_file = _ensure_obtainium_files(base_url)
+    if index_file.is_file():
+        return FileResponse(index_file, media_type="application/json")
+    raise HTTPException(status_code=404, detail="F-Droid repository index not found. No apps patched yet.")
+
+
+@app.get("/automorph-obtainium.json")
+@app.get("/api/obtainium/download")
+async def download_obtainium_export(request: Request):
+    """
+    Directly downloads the Obtainium import configuration file (automorph-obtainium.json).
+    """
+    base_url = _get_base_url(request)
+    export_file, _ = _ensure_obtainium_files(base_url)
+    if export_file.is_file():
+        return FileResponse(
+            export_file,
+            filename="automorph-obtainium.json",
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="automorph-obtainium.json"'}
+        )
+    raise HTTPException(status_code=404, detail="Obtainium export file not found. No apps patched yet.")
+
+
+@app.get("/api/obtainium/export")
+async def get_obtainium_export(request: Request):
+    """
+    Returns the Obtainium export schema as JSON for dashboard consumption and deep link generation.
+    """
+    base_url = _get_base_url(request)
+    export_file, _ = _ensure_obtainium_files(base_url)
+    if export_file.is_file():
+        try:
+            with open(export_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(data)
+        except Exception as e:
+            logger.error(f"Error reading obtainium-export.json: {e}")
+            raise HTTPException(status_code=500, detail="Failed to read Obtainium export data")
+    return JSONResponse({"schemaVersion": 2, "apps": []})
+
+
+@app.get("/api/obtainium/open")
+async def open_obtainium_redirect(request: Request):
+    """
+    Web redirect helper for QR code scans that triggers the obtainium:// intent on mobile.
+    """
+    base_url = _get_base_url(request)
+    export_file, _ = _ensure_obtainium_files(base_url)
+    apps = []
+    if export_file.is_file():
+        try:
+            with open(export_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                apps = data.get("apps", [])
+        except Exception:
+            pass
+
+    encoded_json = urllib.parse.quote(json.dumps(apps))
+    deep_link = f"obtainium://apps/{encoded_json}"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Opening Obtainium — AutoMorph</title>
+  <style>
+    body {{
+      background: #0d0e12;
+      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 85vh;
+      text-align: center;
+      padding: 24px;
+      margin: 0;
+    }}
+    .card {{
+      background: #16181f;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 32px 24px;
+      max-width: 440px;
+      width: 100%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }}
+    .btn {{
+      display: inline-block;
+      margin-top: 20px;
+      padding: 14px 28px;
+      background: #20cfce;
+      color: #0d0e12;
+      font-weight: 700;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 1rem;
+      transition: background 0.15s;
+    }}
+    .btn:hover {{
+      background: #19b2b1;
+    }}
+  </style>
+  <script>
+    window.location.href = "{deep_link}";
+  </script>
+</head>
+<body>
+  <div class="card">
+    <h2 style="margin: 0 0 12px; color: #20cfce;">Opening Obtainium...</h2>
+    <p style="color: #9ca3af; margin: 0 0 20px; font-size: 0.95rem; line-height: 1.5;">
+      Importing your patched applications into Obtainium on your device.
+    </p>
+    <a href="{deep_link}" class="btn">Tap Here to Open Obtainium</a>
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);">
+      <a href="/automorph-obtainium.json" style="color: #9ca3af; font-size: 0.85rem; text-decoration: underline;">
+        Or download JSON file directly
+      </a>
+    </div>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 # ---------------------------------------------------------------------------

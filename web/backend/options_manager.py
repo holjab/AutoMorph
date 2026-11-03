@@ -6,6 +6,7 @@ Provides path validation, atomic file writes, and .bak backups.
 
 from __future__ import annotations
 
+import concurrent.futures
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -558,46 +559,72 @@ def ensure_app_options(package: str, repos: list[str] | None = None, force: bool
     if not repos:
         log("Warning: No repositories specified or configured for this application.")
 
-    repo_statuses = {}
-    for repo_url in (repos or []):
-        if not isinstance(repo_url, str):
-            continue
-        clean_url = repo_url.strip()
-        if not clean_url:
-            continue
+    valid_urls = [r.strip() for r in (repos or []) if isinstance(r, str) and r.strip()]
+
+    def process_single_repo(clean_url: str) -> tuple[str, dict[str, str], list[str]]:
+        repo_logs: list[str] = []
+        def sub_log(msg: str):
+            tz_obj = None
+            if os.getenv("TZ"):
+                try:
+                    from zoneinfo import ZoneInfo
+                    tz_obj = ZoneInfo(os.environ["TZ"].strip())
+                except Exception:
+                    tz_obj = None
+            now_dt = datetime.now(tz=tz_obj) if tz_obj else datetime.now()
+            now_time = now_dt.strftime("%H:%M:%S")
+            entry = f"[{now_time}] {msg}"
+            repo_logs.append(entry)
+            logger.info(entry)
 
         try:
             owner, repo_name = extract_repo_info(clean_url)
             target_path = get_owner_options_path(safe_pkg, owner)
         except Exception as e:
-            log(f"Error parsing repository URL '{clean_url}': {e}")
-            continue
+            sub_log(f"Error parsing repository URL '{clean_url}': {e}")
+            return "error", {"status": "error", "error": str(e)}, repo_logs
 
-        log(f"--- Processing repository: {owner}/{repo_name} ---")
+        sub_log(f"--- Processing repository: {owner}/{repo_name} ---")
 
         if not force and target_path.is_file() and target_path.stat().st_size > 10:
-            log(f"[Options File] Options file already exists: {target_path.name}. Reusing.")
-            repo_statuses[owner] = {"status": "existing", "source": "options_file"}
-            continue
+            sub_log(f"[Options File] Options file already exists: {target_path.name}. Reusing.")
+            return owner, {"status": "existing", "source": "options_file"}, repo_logs
 
         # Check local cached bundle first
-        cached_mpp = find_cached_mpp(owner, repo_name, log_fn=log)
+        cached_mpp = find_cached_mpp(owner, repo_name, log_fn=sub_log)
         if cached_mpp:
-            log(f"[Local Bundle] Found cached bundle '{cached_mpp.name}'. Running options-create...")
-            if generate_options_via_cli(cached_mpp, safe_pkg, target_path, log_fn=log):
-                repo_statuses[owner] = {"status": "generated", "source": "cached_mpp"}
-                continue
+            sub_log(f"[Local Bundle] Found cached bundle '{cached_mpp.name}'. Running options-create...")
+            if generate_options_via_cli(cached_mpp, safe_pkg, target_path, log_fn=sub_log):
+                return owner, {"status": "generated", "source": "cached_mpp"}, repo_logs
 
         # Download bundle from release
-        log(f"[Network] Downloading release bundle for {owner}/{repo_name}...")
-        downloaded_mpp = download_repo_mpp(owner, repo_name, log_fn=log)
+        sub_log(f"[Network] Downloading release bundle for {owner}/{repo_name}...")
+        downloaded_mpp = download_repo_mpp(owner, repo_name, log_fn=sub_log)
         if downloaded_mpp:
-            log(f"[Network] Obtained '{downloaded_mpp.name}'. Running options-create...")
-            if generate_options_via_cli(downloaded_mpp, safe_pkg, target_path, log_fn=log):
-                repo_statuses[owner] = {"status": "generated", "source": "downloaded_mpp"}
-                continue
+            sub_log(f"[Network] Obtained '{downloaded_mpp.name}'. Running options-create...")
+            if generate_options_via_cli(downloaded_mpp, safe_pkg, target_path, log_fn=sub_log):
+                return owner, {"status": "generated", "source": "downloaded_mpp"}, repo_logs
 
-        repo_statuses[owner] = {"status": "not_found", "source": "none"}
+        return owner, {"status": "not_found", "source": "none"}, repo_logs
+
+    repo_statuses: dict[str, Any] = {}
+    if len(valid_urls) <= 1:
+        for u in valid_urls:
+            owner, status_info, r_logs = process_single_repo(u)
+            if owner != "error":
+                repo_statuses[owner] = status_info
+            logs.extend(r_logs)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(valid_urls))) as executor:
+            future_to_url = {executor.submit(process_single_repo, u): u for u in valid_urls}
+            for future in concurrent.futures.as_completed(future_to_url):
+                try:
+                    owner, status_info, r_logs = future.result()
+                    if owner != "error":
+                        repo_statuses[owner] = status_info
+                    logs.extend(r_logs)
+                except Exception as ex:
+                    log(f"Error processing repo {future_to_url[future]}: {ex}")
 
     result = get_app_options(safe_pkg)
     result["repo_statuses"] = repo_statuses

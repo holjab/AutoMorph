@@ -20,6 +20,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import smtplib
 import time
 from typing import Any
@@ -85,17 +86,21 @@ def normalize_base_url(url: str | None) -> str:
     if not clean:
         return ""
     if not clean.startswith("http://") and not clean.startswith("https://"):
-        clean = "https://" + clean
+        if re.match(r"^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.|localhost)", clean, re.IGNORECASE):
+            clean = "http://" + clean
+        else:
+            clean = "https://" + clean
     return clean.rstrip("/")
 
 
-def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]:
+def get_all_ingress_endpoints(config: dict | None = None) -> list[dict[str, str]]:
     """
-    Detects and normalizes all active tunnel endpoints independently:
-      - Cloudflare: CLOUDFLARE_TUNNEL_URL or 'cloudflare' in COMPOSE_PROFILES (#F38020)
-      - Pangolin:   PANGOLIN_URL or 'pangolin' in COMPOSE_PROFILES (#DC2626)
-      - Tailscale:  TAILSCALE_FUNNEL_URL, TAILSCALE_URL, or config tailscale.base_url (#121316)
-      - Local:      http://localhost:8080 (fallback if none configured)
+    Detects and normalizes all available ingress endpoints independently:
+      - Cloudflare Tunnel
+      - Pangolin Tunnel
+      - Tailscale Funnel
+      - Custom Outside URL (if configured)
+      - Local Server
     """
     config = config or {}
     endpoints: list[dict[str, str]] = []
@@ -110,7 +115,7 @@ def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]
     if cf_url_raw:
         endpoints.append({
             "id": "cloudflare",
-            "label": "Cloudflare",
+            "label": "Cloudflare Tunnel",
             "badge": "CF",
             "icon": "☁️",
             "color": "#F38020",
@@ -125,7 +130,7 @@ def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]
     if pangolin_url_raw:
         endpoints.append({
             "id": "pangolin",
-            "label": "Pangolin",
+            "label": "Pangolin Tunnel",
             "badge": "Pangolin",
             "icon": "🌐",
             "color": "#DC2626",
@@ -145,7 +150,7 @@ def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]
     if ts_url_raw:
         endpoints.append({
             "id": "tailscale",
-            "label": "Tailscale",
+            "label": "Tailscale Funnel",
             "badge": "Tailscale",
             "icon": "🔒",
             "color": "#121316",
@@ -153,19 +158,62 @@ def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]
             "base_url": normalize_base_url(ts_url_raw),
         })
 
-    # 4. Fallback to Local Origin if no tunnels are configured
-    if not endpoints:
+    # 4. Custom Outside URL (if configured in config or environment)
+    custom_url_raw = (
+        str(config.get("custom_base_url") or "").strip()
+        or str(config.get("base_url") or "").strip()
+        or os.getenv("BASE_URL", "").strip()
+        or os.getenv("EXTERNAL_URL", "").strip()
+    )
+    if custom_url_raw:
         endpoints.append({
-            "id": "local",
-            "label": "Local",
-            "badge": "Local",
-            "icon": "⚡",
-            "color": "#4A7FC8",
-            "border_color": "#3b69a6",
-            "base_url": "http://localhost:8080",
+            "id": "custom",
+            "label": "Custom URL",
+            "badge": "Custom",
+            "icon": "✏️",
+            "color": "#10B981",
+            "border_color": "#059669",
+            "base_url": normalize_base_url(custom_url_raw),
         })
 
+    # 5. Local Server
+    endpoints.append({
+        "id": "local",
+        "label": "Local Server",
+        "badge": "Local",
+        "icon": "⚡",
+        "color": "#4A7FC8",
+        "border_color": "#3b69a6",
+        "base_url": "http://localhost:8080",
+    })
+
     return endpoints
+
+
+def resolve_tunnel_endpoints(config: dict | None = None) -> list[dict[str, str]]:
+    """
+    Resolves ingress endpoints, placing the user's preferred endpoint first (index 0).
+    """
+    config = config or {}
+    all_eps = get_all_ingress_endpoints(config)
+    preferred = str(config.get("preferred_endpoint") or "auto").strip().lower()
+
+    if preferred and preferred != "auto":
+        match = next((ep for ep in all_eps if ep["id"] == preferred), None)
+        if match:
+            remaining = [ep for ep in all_eps if ep["id"] != preferred]
+            return [match] + remaining
+
+    # Default "auto" sorting: active tunnels first, then custom, then local
+    tunnels = [ep for ep in all_eps if ep["id"] in ("cloudflare", "pangolin", "tailscale")]
+    custom = [ep for ep in all_eps if ep["id"] == "custom"]
+    local = [ep for ep in all_eps if ep["id"] == "local"]
+
+    if tunnels:
+        return tunnels + custom + local
+    if custom:
+        return custom + local
+    return local
 
 
 # ---------------------------------------------------------------------------
@@ -215,11 +263,15 @@ def build_app_success_record(
             latest_ver = list(pkg_registry.keys())[-1]
             reg_ver_info = pkg_registry[latest_ver]
 
+    pkg_meta = reg_ver_info.get("package", {}) if isinstance(reg_ver_info, dict) else {}
+    file_meta = reg_ver_info.get("file", {}) if isinstance(reg_ver_info, dict) else {}
+    patch_meta = reg_ver_info.get("patch", {}) if isinstance(reg_ver_info, dict) else {}
+
     version_str = latest_ver or (resolved_apk.parent.name if resolved_apk and resolved_apk.parent else "Unknown")
-    arch = reg_ver_info.get("arch") or raw_dict.get("arch") or global_arch
+    arch = pkg_meta.get("arch") or reg_ver_info.get("arch") or raw_dict.get("arch") or global_arch
 
     # File size: Check patched.json first (anticipation), fallback to stat() if not yet populated
-    file_size_val = reg_ver_info.get("file_size") or reg_ver_info.get("size_bytes")
+    file_size_val = file_meta.get("file_size") or file_meta.get("size_bytes") or reg_ver_info.get("file_size") or reg_ver_info.get("size_bytes")
     if file_size_val:
         file_size_str = email_template.format_file_size(file_size_val)
     elif resolved_apk and resolved_apk.is_file():
@@ -228,15 +280,16 @@ def build_app_success_record(
         file_size_str = "Unknown size"
 
     # Pre-computed SHA-256
-    checksum_str = reg_ver_info.get("sha256") or raw_dict.get("sha256")
+    checksum_str = file_meta.get("sha256") or reg_ver_info.get("sha256") or raw_dict.get("sha256")
 
     # Repositories & Patches
-    repos = reg_ver_info.get("repos") or raw_dict.get("applied_repos") or raw_dict.get("scanned_repos") or []
-    applied_patches_raw = reg_ver_info.get("applied_patches") or {}
+    repos = patch_meta.get("repos") or reg_ver_info.get("repos") or raw_dict.get("applied_repos") or raw_dict.get("scanned_repos") or []
+    applied_patches_raw = patch_meta.get("applied_patches") or reg_ver_info.get("applied_patches") or {}
     applied_patches = []
     if isinstance(applied_patches_raw, dict):
         for p_name, p_repo in applied_patches_raw.items():
-            applied_patches.append({"name": p_name, "repo": str(p_repo)})
+            repo_url = p_repo.get("repo") if isinstance(p_repo, dict) else p_repo
+            applied_patches.append({"name": p_name, "repo": str(repo_url or "")})
     elif isinstance(applied_patches_raw, list):
         for item in applied_patches_raw:
             if isinstance(item, dict):
@@ -245,8 +298,8 @@ def build_app_success_record(
                 applied_patches.append({"name": item, "repo": ""})
 
     # Strategy & Attempt Resolution
-    strat_num = reg_ver_info.get("strat") or raw_dict.get("strategy") or 1
-    att_num = reg_ver_info.get("attempt") or raw_dict.get("attempt") or 1
+    strat_num = patch_meta.get("strat") or reg_ver_info.get("strat") or raw_dict.get("strategy") or 1
+    att_num = patch_meta.get("attempt") or reg_ver_info.get("attempt") or raw_dict.get("attempt") or 1
     strat_short = f"Strategy {strat_num}"
     strat_long = f"Strategy {strat_num} ({'All Patches' if str(strat_num) == '1' else 'Version-Compatible'})"
     winning_badge = f"{strat_short} • Attempt {att_num}"
@@ -363,14 +416,15 @@ def generate_email_content(
     endpoints = resolve_tunnel_endpoints(config)
     ep_ids = {ep["id"] for ep in endpoints}
 
-    if "cloudflare" in ep_ids and "tailscale" in ep_ids:
-        security_badge_text = "Cloudflare & Tailscale Tunnels"
-    elif "cloudflare" in ep_ids:
+    primary_id = endpoints[0]["id"] if endpoints else "local"
+    if primary_id == "cloudflare":
         security_badge_text = "Cloudflare Tunnel"
-    elif "pangolin" in ep_ids:
+    elif primary_id == "pangolin":
         security_badge_text = "Pangolin Tunnel"
-    elif "tailscale" in ep_ids:
+    elif primary_id == "tailscale":
         security_badge_text = "Tailscale Funnel"
+    elif primary_id in ("custom", "external"):
+        security_badge_text = "Custom Outside URL"
     else:
         security_badge_text = "Local Server"
 

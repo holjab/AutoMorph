@@ -39,18 +39,3 @@ def logger_init(project_root: Path, name: str = "main") -> tuple[logging.Logger,
     logging.getLogger("pyaxmlparser").setLevel(logging.WARNING)
 
     return logger, log_dir
-
-def remove_log(log_dir: Path, max_logs: int | None = 5) -> None:
-    logging.shutdown()
-    if max_logs is None:
-        max_logs = 5
-
-    existing_logs = sorted(log_dir.glob("automorph_*.log"))
-
-    while len(existing_logs) > max_logs:
-        oldest = existing_logs.pop(0)
-        
-        try:
-            oldest.unlink(missing_ok=True)
-        except OSError:
-            pass

@@ -8,18 +8,21 @@ import urllib.parse
 from pathlib import Path
 import logging
 from datetime import datetime
+from pyaxmlparser.axmlprinter import AXMLPrinter
+from zipfile import ZipFile
 
 logger = logging.getLogger(__name__)
 
 class Morphe:
 
-    def __init__(self, project_root: Path, original_dir: Path, patched_dir: Path, architecture: str, detailed_app_list: dict[str, dict], repo_details: dict[str, dict], low_spec_mode: bool, force: bool) -> None:
+    def __init__(self, project_root: Path, original_dir: Path, patched_dir: Path, architecture: str, detailed_app_list: dict[str, dict], repo_details: dict[str, dict], low_spec_mode: bool, force: bool, base_url: str) -> None:
         self.project_root = project_root
         self.repo_details = repo_details
         self.arch = architecture
         self.low_spec_mode = low_spec_mode
         self.detailed_patch_list = detailed_app_list
         self.force = force
+        self.base_url = base_url
         
         self.options_dir = project_root / "tools" / "automorph-data" / "options"
         self.original_dir = original_dir
@@ -416,13 +419,13 @@ class Morphe:
                         patches_dict = {}
 
                     for patch, values in patches_dict.items():
-                        aliase = patch
+                        alias = patch
                         alias_map = self.detailed_patch_list[app].get('patch_aliases', {})
                         if patch in alias_map:
-                            aliase = alias_map[patch]
+                            alias = alias_map[patch]
 
                         if isinstance(values, dict) and values.get('enabled'):
-                            enabled_patches_per_app.setdefault(app, {}).setdefault(aliase, {})[repo] = patch
+                            enabled_patches_per_app.setdefault(app, {}).setdefault(alias, {})[repo] = patch
                             all_enabled_repos.add(repo)
 
         return enabled_patches_per_app, all_enabled_repos
@@ -518,9 +521,9 @@ class Morphe:
 
         entries = [data] if isinstance(data, dict) else (data if isinstance(data, list) else [])
 
-        for aliase, details in enabled_patches_per_app_versions.items():
+        for alias, details in enabled_patches_per_app_versions.items():
             if len(details) > 1:
-                logger.info(f" └── [!] Aliase found {aliase}")
+                logger.info(f" └── [!] Alias found {alias}")
                 for repo, patch_info in details.items():
                     shas = self.get_sha(repo, package_name)
                     patch_name = patch_info[0]
@@ -614,27 +617,22 @@ class Morphe:
                         continue
 
                     patch_name = patch_search.group(1).strip()
-                    package_names = re.findall(r"Package name:\s*(\S+)", block)
-                    version_search = re.search(r"Compatible versions:\s*(.+)", block)
+                    package_sections = re.split(r"Package name:\s*", block)[1:]
 
                     # 1. Parse versions (take the first listed compatible version or default to (0, 0, 0))
-                    if version_search:
-                        first_ver_line = version_search.group(1).strip().splitlines()[0]
-                        version_digits = re.findall(r"\d+", first_ver_line)
-                        tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
-                        ver_str = first_ver_line.strip() if version_digits else "0.0.0"
-                    else:
-                        tup_ver = (0, 0, 0)
-                        ver_str = "0.0.0"
-
                     # 2. Package-specific patches
-                    if package_names:
-                        for pkg in package_names:
+                    if package_sections:
+                        for section in package_sections:
+                            pkg = section.split()[0]
+                            version_search = re.search(r"Compatible versions:\s*(.+)", section)
+                            first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
+                            version_digits = re.findall(r"\d+", first_ver_line)
+                            tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
+                            ver_str = first_ver_line.strip() if version_digits else "0.0.0"
                             if pkg in enabled_patches_per_app:
                                 for alias, details in enabled_patches_per_app[pkg].items():
                                     if repo in details and details[repo] == patch_name:
                                         enabled_patches_per_app_versions.setdefault(pkg, {}).setdefault(alias, {})[repo] = (patch_name, tup_ver, ver_str)
-                    
                     # 3. Genuine universal patches (check if any configured app wants this patch)
                     else:
                         for app_pkg, aliases in enabled_patches_per_app.items():
@@ -697,7 +695,7 @@ class Morphe:
 
     def check_repo_reqs(self, aliase_details: dict[str, dict[str, tuple[str, tuple[int, ...], str]]], target_version: str) -> set[str]:
         repos = set()
-        for aliase, repo_details in aliase_details.items():
+        for alias, repo_details in aliase_details.items():
             for repo, (patch_name, version_tuple, version_string) in repo_details.items():
                 if version_string == target_version:
                     repos.add(repo)
@@ -708,7 +706,7 @@ class Morphe:
                     if chosen_repo:
                         repos.add(chosen_repo)
                     else:
-                        logger.error(f" └── [!] No repo found for aliase: {aliase}")
+                        logger.error(f" └── [!] No repo found for alias: {alias}")
         return repos
 
     def check_repo_per_version(self, aliase_details: dict[str, dict[str, tuple[str, tuple[int, ...], str]]]) -> dict[tuple[int, ...], set[str]]:
@@ -720,7 +718,7 @@ class Morphe:
 
         return output 
 
-    def patch(self, package_name: str, version_name: str, repos: set[str], options_to_use: Path, strat: int, attempt: int, striplibs: bool) -> tuple[bool, Path | str | None, str | None]:
+    def patch(self, package_name: str, version_name: str, repos: set[str], options_to_use: Path, striplibs: bool, strat: int) -> tuple[bool, Path | str | None, str | None, dict | None]:
         dest = None
 
         cmd = ["java"]
@@ -734,7 +732,7 @@ class Morphe:
 
         if not repos:
             logger.error(" └── [!] Repo list is empty.")
-            return False, dest, "Repo list is empty."
+            return False, dest, "Repo list is empty.", None
 
         if len(repos) == 1:
             dest = "one_repo" 
@@ -742,7 +740,6 @@ class Morphe:
         for repo in repos:
             owner = self.repo_details[repo]['owner']
             repo_name = self.repo_details[repo]['repo_name']
-
             mpp_path = self.get_cached_repo_path(owner, repo_name, repo)
 
             if not mpp_path:
@@ -756,14 +753,18 @@ class Morphe:
         output_dest = self.patched_dir / package_name / version_name / f"{package_name}_{version_name}_patched.apk"
         output_dest.parent.mkdir(parents=True, exist_ok=True)
         result_dest = output_dest.parent / "result.json"
-        input_package = self.original_dir / package_name / version_name / f"{package_name}.xapk"
+        version_dir = self.original_dir / package_name / version_name
+        candidate_names = (
+            f"{package_name}.xapk",
+            f"{package_name}.apk",
+            f"{package_name}-{version_name}.xapk",
+            f"{package_name}-{version_name}.apk",
+        )
+        input_package = next((version_dir / name for name in candidate_names if (version_dir / name).is_file()), None)
 
-        if not input_package.is_file():
-            input_package = self.original_dir / package_name / version_name / f"{package_name}.apk"
-
-        if not input_package.is_file():
+        if input_package is None:
             logger.error(f"No apk or xapk found for {package_name}, version: {version_name}")
-            return False, dest, f"No APK or XAPK found for {package_name} v{version_name}"
+            return False, dest, f"No APK or XAPK found for {package_name} v{version_name}", None
 
         cmd += ["--result-file", str(result_dest), "--options-file", str(options_to_use)]
 
@@ -778,12 +779,14 @@ class Morphe:
             subprocess.run(cmd, capture_output=True, text=True, check=True)
 
             if output_dest.is_file():
+                now = datetime.now()
+                timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+                time_ms = int(now.timestamp() * 1000)
                 logger.info(f" └── [✓] Successfully patched {package_name} v{version_name}")
-                self.write_patched_json(package_name, version_name, repos, strat, attempt, options_to_use, output_dest, result_dest)
-                return True, output_dest, None
+                return True, output_dest, result_dest, {'time': timestamp, 'time_ms': time_ms}
             else:
                 logger.error(" └── [!] Java exited with code 0, but output APK was not found.")
-                return False, dest, "Java exited with code 0, but output APK was not found."
+                return False, dest, "Java exited with code 0, but output APK was not found.", None
 
         except subprocess.CalledProcessError as e:
             if e.returncode in (130, 143, -2, -15, -9) or e.returncode < 0:
@@ -791,115 +794,12 @@ class Morphe:
                 raise KeyboardInterrupt("Patching interrupted by user")
             error_msg = next((line.strip() for line in e.stderr.splitlines() if line.strip()), "Unknown CLI error") if e.stderr else "Unknown CLI error"
             logger.error(f" └── [!] Morphe CLI failed (exit code {e.returncode}): {error_msg}")
-            return False, dest, f"Morphe CLI failed (exit code {e.returncode}): {error_msg}"
+            return False, dest, f"Morphe CLI failed (exit code {e.returncode}): {error_msg}", None
 
         except FileNotFoundError:
             logger.error(" └── [!] Java executable not found. Ensure Java is installed and on your PATH.")
-            return False, dest, "Java executable not found."
+            return False, dest, "Java executable not found.", None
 
         except KeyboardInterrupt:
             logger.critical("\n └── [!] Patch process cancelled by user.")
             raise
-
-#################################
-#      Write Patched Json       #
-#################################
-
-    def write_patched_json(self, package_name: str, version_name: str, repos: set[str], strat: int, attempt: int, options_to_use: Path, output: Path, result_dset: Path) -> None:
-        attempt += 1
-        patched_json = self.state_dir / "patched.json"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        patched_data = {}
-        applied_patches = {}
-        patch_aliases = {}
-
-        try:
-            with open(result_dset, "r", encoding="utf-8") as r:
-                results = json.load(r)
-        except json.JSONDecodeError:
-            logger.warning(f"Unable to open results file for {package_name} v{version_name}")
-            pass
-
-        if results:
-            applied_patches_res = results.get('appliedPatches')
-            
-            if applied_patches_res:  
-                bundles = []
-
-                if len(repos) > 1:
-                    with open(options_to_use, "r", encoding="utf-8") as f:
-                        try:
-                            bundles = json.load(f)
-                        except json.JSONDecodeError:
-                            logger.warning(f"Unable to open options file for {package_name}: {options_to_use}")
-
-                    target_shas = {}
-
-                    for r in repos:
-                        cached_repo = self.repo_details[r]['cached_repo']['cached_mpp_path']
-                        sha = self.repo_details[r].get("sha")
-                        if not sha:
-                            sha = self.make_sha(cached_repo)
-                            self.repo_details[r]["sha"] = sha
-                        target_shas[sha] = r
-
-                for patch_name in applied_patches_res:
-
-                    if len(repos) > 1:
-                        if bundles:
-                            repo = self.find_repo(patch_name, bundles, target_shas)
-                        else:
-                            repo = "Unable to find repo"
-                    else:
-                        repo = next(iter(repos))
-
-                    applied_patches[patch_name] = repo
-
-        if patched_json.is_file():
-                try:
-                    with open(patched_json, "r", encoding="utf-8") as p:
-                        patched_data = json.load(p)
-                except json.JSONDecodeError:
-                    pass
-
-        for p, aliase in self.detailed_patch_list[package_name].get("patch_aliases", {}).items():
-            if aliase:
-                patch_aliases.setdefault(aliase, []).append(p)
-
-        package_sha = self.make_sha(output)
-
-        package_size = self.get_size(output)
-        
-        patched_data.setdefault(package_name, {})[version_name] = {'applied_patches': applied_patches, 'patch_aliases': patch_aliases, 'location': str(output), **package_size, 'sha256': package_sha, 'repos': list(repos), 'strat': strat, 'attempt': attempt, 'arch': self.arch, 'time': timestamp}
-
-        with open(patched_json, "w", encoding="utf-8") as f:
-            json.dump(patched_data, f, indent=2)
-
-    def find_repo(self, patch: str, bundles: list[dict], target_shas: dict[str, str]) -> str:
-        for bundle in bundles:
-            patch_data = bundle.get("patches", {}).get(patch)
-            if patch_data and patch_data.get("enabled"):
-                found_sha = bundle.get("meta", {}).get("sha256")
-                if found_sha in target_shas:
-                    return target_shas[found_sha]
-            
-        return "Unable to find repo"
-
-    def make_sha(self, item: Path) -> str:
-        sha = hashlib.sha256()
-
-        with open(item, "rb") as f:
-            while chunk := f.read(65536):
-                sha.update(chunk)
-
-        return sha.hexdigest()
-
-    def get_size(self, package: Path) -> dict[str, int | str]:
-        size_in_bytes = package.stat().st_size
-        size = {'size_bytes': size_in_bytes}
-
-        for unit in ["B", "KB", "MB", "GB", "TB"]:
-            if size_in_bytes < 1024:
-                size['file_size'] = f"{size_in_bytes:.2f} {unit}"
-                return size
-            size_in_bytes /= 1024

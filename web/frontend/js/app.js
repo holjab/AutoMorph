@@ -136,6 +136,17 @@ function setupEventListeners() {
     loadAllData(true);
   });
 
+  // Obtainium Modal Controls
+  document.getElementById('btn-obtainium-sync')?.addEventListener('click', () => openObtainiumModal());
+  document.getElementById('btn-hero-obtainium')?.addEventListener('click', () => openObtainiumModal());
+  document.getElementById('btn-obtainium-modal-close')?.addEventListener('click', closeObtainiumModal);
+  document.getElementById('btn-obtainium-modal-close-x')?.addEventListener('click', closeObtainiumModal);
+  document.getElementById('modal-obtainium')?.addEventListener('click', (e) => {
+    if (e.target.id === 'modal-obtainium') closeObtainiumModal();
+  });
+  document.getElementById('btn-obtainium-copy-json')?.addEventListener('click', copyObtainiumJson);
+  document.getElementById('btn-obtainium-copy-repo')?.addEventListener('click', copyFdroidRepoUrl);
+
   // Docker Image Update Modal Controls
   document.getElementById('site-update-btn')?.addEventListener('click', openUpdateModal);
   document.getElementById('site-version-tag')?.addEventListener('click', openUpdateModal);
@@ -270,11 +281,23 @@ function setupEventListeners() {
   });
 
   document.getElementById('btn-wiz-refresh-catalog')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btn-wiz-refresh-catalog');
+    const icon = btn?.querySelector('.material-symbols-rounded');
+    if (icon) icon.style.animation = 'spin 0.8s linear infinite';
+    if (btn) btn.disabled = true;
     showToast('Refreshing live catalog from Morphe...', 'info');
-    await fetchMorpheCatalog(true);
-    const query = document.getElementById('wiz-search-input')?.value.trim() || '';
-    searchCatalog(query);
-    showToast('Live catalog refreshed', 'success');
+    try {
+      await fetchMorpheCatalog(true);
+      const query = document.getElementById('wiz-search-input')?.value.trim() || '';
+      searchCatalog(query);
+      showToast('Live catalog refreshed', 'success');
+    } catch (err) {
+      console.error('Failed to refresh catalog:', err);
+      showToast('Failed to refresh catalog from Morphe', 'error');
+    } finally {
+      if (icon) icon.style.animation = '';
+      if (btn) btn.disabled = false;
+    }
   });
 
   document.getElementById('btn-wiz-toggle-custom')?.addEventListener('click', () => {
@@ -300,6 +323,29 @@ function setupEventListeners() {
       input.value = '';
     } else {
       showToast('Please enter a valid Git repository URL.', 'warning');
+    }
+  });
+
+  // Wizard Step 2: Refresh Repos from Catalog
+  document.getElementById('btn-wiz-repos-refresh')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btn-wiz-repos-refresh');
+    const icon = btn?.querySelector('.material-symbols-rounded');
+    if (icon) icon.style.animation = 'spin 0.8s linear infinite';
+    if (btn) btn.disabled = true;
+    showToast('Refreshing live catalog from Morphe...', 'info');
+    try {
+      await fetchMorpheCatalog(true);
+      const pkg = state.wizard.selectedPackage;
+      if (pkg) {
+        await loadSuggestedReposForPackage(pkg);
+      }
+      showToast('Repositories refreshed from live Morphe catalog', 'success');
+    } catch (err) {
+      console.error('Failed to refresh catalog:', err);
+      showToast('Failed to refresh catalog from Morphe', 'error');
+    } finally {
+      if (icon) icon.style.animation = '';
+      if (btn) btn.disabled = false;
     }
   });
 
@@ -376,6 +422,29 @@ function setupEventListeners() {
     }
   });
 
+  // Edit App Modal Tab 1: Refresh Repos from Catalog
+  document.getElementById('btn-edit-refresh-catalog')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btn-edit-refresh-catalog');
+    const icon = btn?.querySelector('.material-symbols-rounded');
+    if (icon) icon.style.animation = 'spin 0.8s linear infinite';
+    if (btn) btn.disabled = true;
+    showToast('Refreshing live catalog from Morphe...', 'info');
+    try {
+      await fetchMorpheCatalog(true);
+      renderEditReposTab();
+      if (state.editApp) {
+        state.editApp.repoPatches = {};
+      }
+      showToast('Repositories refreshed from live Morphe catalog', 'success');
+    } catch (err) {
+      console.error('Failed to refresh catalog:', err);
+      showToast('Failed to refresh catalog from Morphe', 'error');
+    } finally {
+      if (icon) icon.style.animation = '';
+      if (btn) btn.disabled = false;
+    }
+  });
+
   document.getElementById('btn-edit-add-alias')?.addEventListener('click', () => {
     addEditAliasRow();
   });
@@ -441,6 +510,17 @@ function setupEventListeners() {
   document.getElementById('btn-reload-settings')?.addEventListener('click', () => loadSettings(true));
   document.getElementById('btn-save-system-settings')?.addEventListener('click', saveSystemSettings);
   document.getElementById('btn-email-test-quick')?.addEventListener('click', sendQuickTestEmail);
+  document.getElementById('setting-endpoint-select')?.addEventListener('change', (e) => {
+    const customGroup = document.getElementById('setting-custom-url-group');
+    if (customGroup) {
+      if (e.target.value === 'custom') {
+        customGroup.classList.remove('hidden');
+        document.getElementById('setting-custom-url')?.focus();
+      } else {
+        customGroup.classList.add('hidden');
+      }
+    }
+  });
 
   const chkMaxOrig = document.getElementById('setting-max-original-enable');
   const inpMaxOrig = document.getElementById('setting-max-original-packages');
@@ -1854,6 +1934,50 @@ function renderSettings(settings) {
     inpMaxLogs.value = sys.max_logs;
   }
 
+  // Repository Ingress & Base URL Selector
+  const selEndpoint = document.getElementById('setting-endpoint-select');
+  const customGroup = document.getElementById('setting-custom-url-group');
+  const inpCustomUrl = document.getElementById('setting-custom-url');
+
+  if (selEndpoint) {
+    selEndpoint.innerHTML = '';
+
+    // 1. Add detected live endpoints (Cloudflare, Pangolin, Tailscale, Local)
+    const available = sys.available_endpoints || [];
+    available.forEach(ep => {
+      if (ep.id === 'custom') return;
+      const opt = document.createElement('option');
+      opt.value = ep.id;
+      opt.textContent = `${ep.icon || '🌐'} ${ep.label} (${ep.base_url})`;
+      selEndpoint.appendChild(opt);
+    });
+
+    // 2. Custom Outside URL option
+    const optCustom = document.createElement('option');
+    optCustom.value = 'custom';
+    optCustom.textContent = '✏️ Custom Outside URL...';
+    selEndpoint.appendChild(optCustom);
+
+    // Set active selection to the current preferred or active endpoint
+    const activeId = (sys.preferred_endpoint && sys.preferred_endpoint !== 'auto') 
+      ? sys.preferred_endpoint 
+      : (sys.active_endpoint_id || (available[0] ? available[0].id : 'local'));
+    selEndpoint.value = activeId;
+
+    // Show/hide custom URL input
+    if (customGroup) {
+      if (activeId === 'custom') {
+        customGroup.classList.remove('hidden');
+      } else {
+        customGroup.classList.add('hidden');
+      }
+    }
+  }
+
+  if (inpCustomUrl) {
+    inpCustomUrl.value = sys.custom_base_url || sys.base_url || '';
+  }
+
   const chkMaxOrig = document.getElementById('setting-max-original-enable');
   const inpMaxOrig = document.getElementById('setting-max-original-packages');
   const origLimit = (sys.max_original_packages !== undefined && sys.max_original_packages !== null && sys.max_original_packages !== '' && String(sys.max_original_packages).toLowerCase() !== 'none')
@@ -1977,6 +2101,9 @@ async function saveSystemSettings() {
       max_logs: Number.isInteger(maxLogsVal) && maxLogsVal > 0 ? maxLogsVal : 5,
       max_original_packages: maxOriginalPackages,
       max_patched_packages: maxPatchedPackages,
+      preferred_endpoint: document.getElementById('setting-endpoint-select')?.value || 'local',
+      custom_base_url: document.getElementById('setting-custom-url')?.value.trim() || null,
+      base_url: document.getElementById('setting-custom-url')?.value.trim() || null,
     };
 
     const res = await fetch('/api/settings/system', {
@@ -2967,33 +3094,13 @@ const MORPHE_DEFAULT_APPS = {
 };
 
 let morpheCatalogData = null;
-try {
-  sessionStorage.removeItem('morphe_catalog_data_v5');
-  sessionStorage.removeItem('morphe_catalog_data_v6');
-  const cachedCatalog = sessionStorage.getItem('morphe_catalog_data_v7');
-  if (cachedCatalog) morpheCatalogData = JSON.parse(cachedCatalog);
-} catch (_) {}
-
 let isFetchingMorpheCatalog = false;
 
 async function fetchMorpheCatalog(force = false) {
   if (force) {
     morpheCatalogData = null;
-    try {
-      sessionStorage.removeItem('morphe_catalog_data_v7');
-    } catch (_) {}
   }
   if (morpheCatalogData) return morpheCatalogData;
-
-  if (!force) {
-    try {
-      const cached = sessionStorage.getItem('morphe_catalog_data_v7');
-      if (cached) {
-        morpheCatalogData = JSON.parse(cached);
-        return morpheCatalogData;
-      }
-    } catch (_) {}
-  }
 
   if (isFetchingMorpheCatalog) {
     while (isFetchingMorpheCatalog) {
@@ -3032,6 +3139,8 @@ async function fetchMorpheCatalog(force = false) {
         supported_repos: [],
         repo_details: [],
         patches_by_repo: {},
+        _seenRepos: new Set(),
+        _seenPatchesByRepo: {},
       };
     }
 
@@ -3048,6 +3157,8 @@ async function fetchMorpheCatalog(force = false) {
           supported_repos: [],
           repo_details: [],
           patches_by_repo: {},
+          _seenRepos: new Set(),
+          _seenPatchesByRepo: {},
         };
       } else {
         if (sInfo.name && sInfo.name !== pkg) catalog[pkg].name = sInfo.name;
@@ -3080,23 +3191,27 @@ async function fetchMorpheCatalog(force = false) {
           supported_repos: [],
           repo_details: [],
           patches_by_repo: {},
+          _seenRepos: new Set(),
+          _seenPatchesByRepo: {},
         };
       }
       if (!catalog[appPkg].patches_by_repo) catalog[appPkg].patches_by_repo = {};
+      if (!catalog[appPkg]._seenPatchesByRepo) catalog[appPkg]._seenPatchesByRepo = {};
+      if (!catalog[appPkg]._seenRepos) catalog[appPkg]._seenRepos = new Set(catalog[appPkg].supported_repos || []);
       return catalog[appPkg];
     }
 
     function linkRepoToApp(appPkg, rUrl, bName, src, patchCnt, isOfficial = false) {
       const app = ensureCatalogApp(appPkg);
       if (!app) return;
-      const existingIdx = app.supported_repos.indexOf(rUrl);
       const detail = {
         repo_url: rUrl,
         name: bName,
         source: src,
         patch_count: patchCnt,
       };
-      if (existingIdx === -1) {
+      if (!app._seenRepos.has(rUrl)) {
+        app._seenRepos.add(rUrl);
         if (isOfficial || rUrl === MORPHE_OFFICIAL_REPO_URL) {
           app.supported_repos.unshift(rUrl);
           app.repo_details.unshift(detail);
@@ -3105,6 +3220,7 @@ async function fetchMorpheCatalog(force = false) {
           app.repo_details.push(detail);
         }
       } else if (isOfficial || rUrl === MORPHE_OFFICIAL_REPO_URL) {
+        const existingIdx = app.supported_repos.indexOf(rUrl);
         if (existingIdx > 0) {
           app.supported_repos.splice(existingIdx, 1);
           app.supported_repos.unshift(rUrl);
@@ -3117,20 +3233,24 @@ async function fetchMorpheCatalog(force = false) {
     function attachPatchToApp(appPkg, rUrl, patchObj, isUniversal = false) {
       const app = ensureCatalogApp(appPkg);
       if (!app) return;
-      if (!app.patches_by_repo[rUrl]) app.patches_by_repo[rUrl] = [];
+      if (!app.patches_by_repo[rUrl]) {
+        app.patches_by_repo[rUrl] = [];
+        app._seenPatchesByRepo[rUrl] = new Set();
+      }
+      if (app._seenPatchesByRepo[rUrl].has(patchObj.name)) return;
+      app._seenPatchesByRepo[rUrl].add(patchObj.name);
+
       const isUniv = Boolean(isUniversal || patchObj.isUniversal === true || patchObj.scope === 'universal' || determinePatchScope(patchObj.name, patchObj) === 'universal');
       const isDefault = isUniv ? false : Boolean(patchObj.default === true || patchObj.use === true);
-      if (!app.patches_by_repo[rUrl].some(p => p.name === patchObj.name)) {
-        app.patches_by_repo[rUrl].push({
-          name: patchObj.name,
-          description: patchObj.description || '',
-          default: isDefault,
-          use: isDefault,
-          isUniversal: isUniv,
-          scope: isUniv ? 'universal' : 'app',
-          options: patchObj.options || null
-        });
-      }
+      app.patches_by_repo[rUrl].push({
+        name: patchObj.name,
+        description: patchObj.description || '',
+        default: isDefault,
+        use: isDefault,
+        isUniversal: isUniv,
+        scope: isUniv ? 'universal' : 'app',
+        options: patchObj.options || null
+      });
     }
 
     // 3. Link bundles and patches from catalog (community + official bundles)
@@ -3188,9 +3308,6 @@ async function fetchMorpheCatalog(force = false) {
     }
 
     morpheCatalogData = catalog;
-    try {
-      sessionStorage.setItem('morphe_catalog_data_v7', JSON.stringify(catalog));
-    } catch (_) {}
     return catalog;
   } catch (err) {
     console.warn('Direct Morphe catalog load failed:', err);
@@ -3774,6 +3891,15 @@ const KNOWN_UNIVERSAL_PATCH_NAMES = new Set([
   'clone app',
   'clone',
   'change package name',
+  'change installer source',
+  'spoof installer source',
+  'installer source',
+  'installer source check',
+  'disable play store updates',
+  'disable play store update',
+  'disable play updates',
+  'disable play update',
+  'disable play update check',
   'hide app icon',
   'remove app icon',
   'change app icon',
@@ -3783,6 +3909,7 @@ const KNOWN_UNIVERSAL_PATCH_NAMES = new Set([
   'enable debug mode',
   'enable android debugging',
   'enable webview debugging',
+  'enable debugging',
   'make app debuggable',
   'spoof signature',
   'spoof app signature',
@@ -3817,6 +3944,20 @@ const KNOWN_UNIVERSAL_PATCH_NAMES = new Set([
   'bypass adb/developer options detection',
   'bypass emulator detection',
   'bypass forced updates',
+  'bypass forced update',
+  'block forced updates',
+  'block update prompts',
+  'block update prompt',
+  'disable auto update',
+  'disable auto updates',
+  'disable auto-update',
+  'disable auto-updates',
+  'disable update check',
+  'disable update checks',
+  'disable update prompts',
+  'disable update prompt',
+  'hide update prompt',
+  'stop remote updates',
   'bypass vpn detection',
   'bypass license verification',
   'bypass okhttp pinning',
@@ -3875,6 +4016,11 @@ function determinePatchScope(patchName, patchObj) {
     norm.startsWith('clone') ||
     norm.startsWith('change package name') ||
     norm.startsWith('spoof ') ||
+    norm.includes('installer source') ||
+    norm.includes('install source') ||
+    norm.includes('installer check') ||
+    norm.includes('play store update') ||
+    norm.includes('play update') ||
     norm.includes('pairip') ||
     norm.includes('microg') ||
     norm.includes('gmscore') ||
@@ -3882,6 +4028,7 @@ function determinePatchScope(patchName, patchObj) {
     norm.includes('license verification') ||
     norm.includes('root check') ||
     norm.includes('debuggable') ||
+    norm.includes('debugging') ||
     norm.includes('user certificate') ||
     norm.includes('certificate pinning') ||
     norm.includes('revenuecat')
@@ -4524,10 +4671,12 @@ async function loadWizardPatches() {
     fetchMorpheCatalog()
   ]);
 
-  // Ensure options files are generated via Morphe options-create workflow for any missing repos
+  // Only trigger backend CLI/download options-fetch if a repo is missing BOTH options file AND catalog patch definitions
   const missingRepos = activeRepos.filter(repoUrl => {
     const owner = extractRepoOwner(repoUrl);
-    return !existingOptions.files || !existingOptions.files[owner];
+    const hasOptions = Boolean(existingOptions.files && existingOptions.files[owner]);
+    const hasCatalogPatches = Boolean(catalog?.[pkg]?.patches_by_repo?.[repoUrl]?.length > 0);
+    return !hasOptions && !hasCatalogPatches;
   });
 
   if (missingRepos.length > 0) {
@@ -5081,10 +5230,12 @@ async function loadEditAppPatches() {
     fetchMorpheCatalog()
   ]);
 
-  // Ensure options files are generated via Morphe options-create workflow for any missing repos
+  // Only trigger backend CLI/download options-fetch if a repo is missing BOTH options file AND catalog patch definitions
   const missingRepos = activeRepos.filter(repoUrl => {
     const owner = extractRepoOwner(repoUrl);
-    return !existingOptions.files || !existingOptions.files[owner];
+    const hasOptions = Boolean(existingOptions.files && existingOptions.files[owner]);
+    const hasCatalogPatches = Boolean(catalog?.[pkg]?.patches_by_repo?.[repoUrl]?.length > 0);
+    return !hasOptions && !hasCatalogPatches;
   });
 
   if (missingRepos.length > 0) {
@@ -5412,6 +5563,8 @@ function handleHashRouting() {
   if (hash.startsWith('#files') || hash.startsWith('#/files')) {
     const sub = hash.replace(/^#\/?files\/?/, '');
     switchTab('files', decodeURIComponent(sub));
+  } else if (hash === '#obtainium' || hash === '#/obtainium' || hash === '#sync' || hash === '#/sync') {
+    openObtainiumModal();
   } else if (!hash && state.activeTab === 'files') {
     switchTab('apps');
   }
@@ -5812,4 +5965,164 @@ function switchResultModalTab(tabName) {
 function closeResultViewerModal() {
   document.getElementById('modal-result-viewer')?.classList.remove('open');
 }
+
+// ---------------------------------------------------------------------------
+// Obtainium Integration & 1-Click Sync
+// ---------------------------------------------------------------------------
+
+let cachedObtainiumExport = null;
+
+async function openObtainiumModal(specificPackage = null) {
+  const modal = document.getElementById('modal-obtainium');
+  if (!modal) return;
+
+  modal.classList.add('open');
+
+  // Detect Android / Mobile
+  const isAndroid = /android/i.test(navigator.userAgent);
+  const isMobile = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+
+  const mobileBox = document.getElementById('obtainium-mobile-box');
+  const desktopBox = document.getElementById('obtainium-desktop-box');
+
+  if (isAndroid || isMobile) {
+    if (mobileBox) mobileBox.classList.remove('hidden');
+  } else {
+    if (mobileBox) mobileBox.classList.add('hidden');
+  }
+
+  // Loading state in QR container
+  const qrContainer = document.getElementById('obtainium-qr-container');
+  if (qrContainer) {
+    qrContainer.innerHTML = '<span class="material-symbols-rounded" style="font-size: 32px; color: #0d0e12; animation: spin 1s infinite linear;">sync</span>';
+  }
+
+  try {
+    const res = await fetch('/api/obtainium/export');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    cachedObtainiumExport = data;
+
+    let appsToSync = data.apps || [];
+    if (specificPackage) {
+      appsToSync = appsToSync.filter(a => a.id === specificPackage || a.name === specificPackage);
+      // Fallback if not in export yet
+      if (appsToSync.length === 0 && data.apps && data.apps.length > 0) {
+        appsToSync = data.apps;
+      }
+    }
+
+    const warnEl = document.getElementById('obtainium-localhost-warning');
+    if (warnEl) {
+      const isLocalhost = appsToSync.some(a => (a.url && (a.url.includes('localhost') || a.url.includes('127.0.0.1'))));
+      if (isLocalhost) {
+        warnEl.classList.remove('hidden');
+      } else {
+        warnEl.classList.add('hidden');
+      }
+    }
+
+    // Update count text
+    const countEl = document.getElementById('obtainium-app-count-text');
+    if (countEl) {
+      if (specificPackage) {
+        countEl.textContent = `Syncs package: ${specificPackage}`;
+      } else {
+        const count = appsToSync.length;
+        countEl.textContent = `Syncs ${count} patched application${count === 1 ? '' : 's'}`;
+      }
+    }
+
+    // Build deep link URI:
+    // If 1 app: obtainium://app/{json}
+    // If >1 apps: obtainium://apps/[{...}]
+    let deepLinkUri = '';
+    if (appsToSync.length === 1) {
+      deepLinkUri = `obtainium://app/${encodeURIComponent(JSON.stringify(appsToSync[0]))}`;
+    } else {
+      deepLinkUri = `obtainium://apps/${encodeURIComponent(JSON.stringify(appsToSync))}`;
+    }
+
+    // Direct link button
+    const directBtn = document.getElementById('btn-obtainium-direct-link');
+    if (directBtn) {
+      directBtn.href = deepLinkUri;
+    }
+
+    // QR Code URL: Redirect through /api/obtainium/open for seamless mobile scanner launch
+    const qrUrl = window.location.origin + '/api/obtainium/open';
+
+    if (qrContainer) {
+      qrContainer.innerHTML = '';
+      if (typeof QRCode !== 'undefined') {
+        new QRCode(qrContainer, {
+          text: qrUrl,
+          width: 200,
+          height: 200,
+          colorDark: '#0d0e12',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+        // QRCode creates both a canvas and an img; ensure only the active one displays
+        setTimeout(() => {
+          const img = qrContainer.querySelector('img');
+          const canvas = qrContainer.querySelector('canvas');
+          if (img && canvas) {
+            if (img.src && img.src.startsWith('data:image/png')) {
+              canvas.style.display = 'none';
+              img.style.display = 'block';
+            } else {
+              img.style.display = 'none';
+              canvas.style.display = 'block';
+            }
+          }
+        }, 50);
+      } else {
+        qrContainer.innerHTML = `<a href="${qrUrl}" target="_blank" style="font-size: 0.8rem; color: #000; text-align: center; word-break: break-all;">Open Sync Link</a>`;
+      }
+    }
+
+  } catch (err) {
+    console.error('Failed to load Obtainium export data:', err);
+    if (qrContainer) {
+      qrContainer.innerHTML = '<span style="color: #ef4444; font-size: 0.8125rem;">No patched apps found yet</span>';
+    }
+    showToast('Failed to load Obtainium sync data: ' + err.message, 'error');
+  }
+}
+
+function closeObtainiumModal() {
+  document.getElementById('modal-obtainium')?.classList.remove('open');
+}
+
+function copyObtainiumJson() {
+  if (!cachedObtainiumExport) {
+    fetch('/api/obtainium/export')
+      .then(res => res.json())
+      .then(data => {
+        cachedObtainiumExport = data;
+        navigator.clipboard.writeText(JSON.stringify(data, null, 2)).then(() => {
+          showToast('Obtainium JSON copied to clipboard!', 'success');
+        });
+      })
+      .catch(err => showToast('Failed to copy: ' + err.message, 'error'));
+    return;
+  }
+  navigator.clipboard.writeText(JSON.stringify(cachedObtainiumExport, null, 2)).then(() => {
+    showToast('Obtainium JSON copied to clipboard!', 'success');
+  }).catch(err => {
+    showToast('Failed to copy to clipboard', 'error');
+  });
+}
+
+function copyFdroidRepoUrl() {
+  const customBase = state.settings?.system?.base_url;
+  const repoUrl = (customBase && customBase.trim()) ? customBase.trim().replace(/\/+$/, '') : window.location.origin;
+  navigator.clipboard.writeText(repoUrl).then(() => {
+    showToast(`F-Droid Repo URL copied: ${repoUrl}`, 'success');
+  }).catch(() => {
+    showToast('Failed to copy URL', 'error');
+  });
+}
+
 
