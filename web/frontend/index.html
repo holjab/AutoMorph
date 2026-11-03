@@ -426,6 +426,26 @@
 
           </div>
 
+          <!-- Repository Delivery Base URL Selector -->
+          <div class="form-group" style="margin-bottom: 20px;">
+            <label class="form-label" for="setting-endpoint-select">Repository Ingress & Base URL</label>
+            <select id="setting-endpoint-select" class="form-control" style="font-family: var(--font-mono); font-size: 0.875rem;">
+              <!-- Populated dynamically with detected live tunnels, local, and custom -->
+            </select>
+            <div class="form-subtext">
+              The primary base URL embedded in Obtainium export and F-Droid repository feeds for mobile devices to download APK updates.
+            </div>
+
+            <!-- Custom URL Input (hidden by default, reveals when 'custom' is selected) -->
+            <div id="setting-custom-url-group" class="hidden" style="margin-top: 12px; padding: 12px 14px; background: var(--bg-surface-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <label class="form-label" for="setting-custom-url" style="font-size: 0.8125rem; margin-bottom: 4px;">Custom External Base URL</label>
+              <input type="text" id="setting-custom-url" class="form-control" placeholder="e.g. http://192.168.1.100:8080 or https://example.com:8000">
+              <div class="form-subtext" style="margin-top: 4px;">
+                Enter your public domain, reverse proxy URL, or LAN IP:port.
+              </div>
+            </div>
+          </div>
+
           <!-- Toggles Grid -->
           <div class="toggles-grid" style="margin-bottom: 20px;">
             
@@ -1716,6 +1736,14 @@
 
       <div class="modal-body" style="padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; flex: 1;">
         
+        <!-- Localhost Warning Notice (shown when feed uses localhost) -->
+        <div id="obtainium-localhost-warning" class="hidden" style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: var(--radius-md); padding: 12px 16px; font-size: 0.8125rem; color: #fca5a5; display: flex; align-items: flex-start; gap: 10px;">
+          <span class="material-symbols-rounded" style="color: #ef4444; font-size: 20px; flex-shrink: 0; margin-top: 1px;">warning</span>
+          <div>
+            <strong>Notice:</strong> Your Obtainium feed is currently using <code>localhost</code>. Other devices will fail to connect unless an <strong>Outside / Base URL</strong> is configured in Settings or a tunnel is active.
+          </div>
+        </div>
+
         <!-- Mobile 1-Tap Card (shown on Android / mobile devices) -->
         <div id="obtainium-mobile-box" class="hidden" style="background: rgba(32, 207, 206, 0.08); border: 1px solid rgba(32, 207, 206, 0.35); border-radius: var(--radius-md); padding: 18px; text-align: center;">
           <div style="font-weight: 600; color: #fff; font-size: 1rem; margin-bottom: 6px;">Android Device Detected</div>

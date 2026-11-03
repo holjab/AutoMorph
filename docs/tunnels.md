@@ -171,6 +171,19 @@ After configuring your chosen tunnel in `.env`:
 
 ---
 
+## Repository Base URL & Ingress Selection (Optional)
+
+AutoMorph automatically detects active tunnels configured in your `.env` (Pangolin, Cloudflare, or Tailscale) and assigns an active address for your Obtainium and F-Droid feeds by default.
+
+If you want to customize or switch which address is used, you can do so in the web portal under **Settings** › **Repository Ingress & Base URL**:
+
+* **Multiple Tunnels**: If you run more than one tunnel simultaneously (such as both Cloudflare and Pangolin), you can choose which tunnel address is embedded into your Obtainium export and F-Droid repository feeds for downloads.
+* **Custom Outside URL**: If you host AutoMorph behind your own reverse proxy or port forward without an automated tunnel, select this option to enter your custom domain or LAN address.
+* **Configured Tunnels Only**: The dropdown automatically filters the list to only display tunnels that have active credentials or profiles in `.env`, keeping unconfigured options hidden.
+* **Local Testing**: You can select `localhost:8080` if you only want local testing on the host machine.
+
+---
+
 ## Troubleshooting
 
 <details>
@@ -180,7 +193,19 @@ Yes! AutoMorph's dispatcher script and notification system support multiple acti
 ```dotenv
 COMPOSE_PROFILES=cloudflare,pangolin
 ```
-Both tunnel links will appear in your notification emails with dedicated badges!
+Both tunnel links will appear in your notification emails with dedicated badges, and you can switch between them anytime in **Settings** › **External URL / Access Mode**!
+</details>
+
+<details>
+<summary><b>Why doesn't a tunnel appear in the Web Settings dropdown?</b></summary>
+
+The dropdown only includes tunnels that are actively configured in your `.env`. If a tunnel's URL or token is missing or left empty, AutoMorph excludes it so only working endpoints are offered. Verify your `.env` settings and restart your container if necessary.
+</details>
+
+<details>
+<summary><b>Why does Obtainium on my phone say connection refused or fail to download?</b></summary>
+
+If the server is using `localhost:8080`, external devices cannot reach it because `localhost` on a phone refers to the phone itself. Go to the AutoMorph web portal under **Settings** › **External URL / Access Mode**, select your active tunnel or custom URL, and save settings.
 </details>
 
 <details>

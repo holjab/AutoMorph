@@ -11,6 +11,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 import re
 import shutil
@@ -1165,6 +1166,24 @@ def get_all_settings() -> dict[str, Any]:
     except (ValueError, TypeError):
         max_patched_packages = None
 
+    scripts_dir = str(PROJECT_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import dispatcher
+
+    available_endpoints = dispatcher.get_all_ingress_endpoints(data)
+    resolved_endpoints = dispatcher.resolve_tunnel_endpoints(data)
+    active_base_url = resolved_endpoints[0]["base_url"] if resolved_endpoints else "http://localhost:8080"
+    active_endpoint_id = resolved_endpoints[0]["id"] if resolved_endpoints else "local"
+
+    saved_preferred = str(data.get("preferred_endpoint") or "").strip().lower()
+    effective_preferred = saved_preferred if (saved_preferred and saved_preferred != "auto") else active_endpoint_id
+
+    raw_custom = data.get("custom_base_url") or data.get("base_url")
+    if raw_custom is None:
+        raw_custom = os.getenv("BASE_URL") or os.getenv("EXTERNAL_URL") or ""
+    custom_base_url = str(raw_custom).strip()
+
     return {
         "system": {
             "architecture": str(data.get("architecture") or "arm64-v8a"),
@@ -1176,6 +1195,12 @@ def get_all_settings() -> dict[str, Any]:
             "max_logs": max_logs,
             "max_original_packages": max_original_packages,
             "max_patched_packages": max_patched_packages,
+            "preferred_endpoint": effective_preferred,
+            "active_endpoint_id": active_endpoint_id,
+            "custom_base_url": custom_base_url,
+            "base_url": active_base_url,
+            "active_base_url": active_base_url,
+            "available_endpoints": available_endpoints,
         },
         "tunnels": {
             "tailscale": {
@@ -1238,7 +1263,44 @@ def update_system_settings(settings: dict[str, Any]) -> dict[str, Any]:
         except (ValueError, TypeError):
             data["max_patched_packages"] = None
 
+    if "preferred_endpoint" in settings:
+        pref = str(settings["preferred_endpoint"]).strip().lower() if settings["preferred_endpoint"] else "auto"
+        data["preferred_endpoint"] = pref
+
+    if "custom_base_url" in settings or "base_url" in settings:
+        raw_val = settings.get("custom_base_url") if "custom_base_url" in settings else settings.get("base_url")
+        val = str(raw_val).strip() if raw_val is not None else ""
+        data.pop("base_url", None)
+        if val:
+            data["custom_base_url"] = val
+            os.environ["BASE_URL"] = val
+        else:
+            data["custom_base_url"] = None
+            os.environ.pop("BASE_URL", None)
+
+        env_file = PROJECT_ROOT / ".env"
+        if env_file.is_file():
+            try:
+                from dotenv import set_key
+                set_key(str(env_file), "BASE_URL", val)
+            except Exception as e:
+                logger.warning(f"Could not write BASE_URL to .env: {e}")
+
     save_config_raw(yaml, data)
+
+    if PATCHED_JSON_PATH.is_file():
+        try:
+            scripts_dir = str(PROJECT_ROOT / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import dispatcher
+            import manager
+            endpoints = dispatcher.resolve_tunnel_endpoints(data)
+            active_base_url = endpoints[0]["base_url"] if endpoints else "http://localhost:8080"
+            manager.build_all_jsons(STATE_DIR, PATCHED_JSON_PATH, active_base_url)
+        except Exception as e:
+            logger.warning(f"Could not rebuild Obtainium/FDroid JSONs after settings update: {e}")
+
     return get_all_settings()["system"]
 
 

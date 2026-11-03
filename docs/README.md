@@ -29,6 +29,7 @@ Choose a guide below to get started:
   * Using a **custom keystore** for seamless in-place updates with the Morphe mobile app.
   * Enabling **Low-Spec Mode** for 1GB RAM instances.
   * Setting up automated email build notifications and downloading APKs.
+  * *(Optional)* Connecting with **Obtainium & F-Droid** for automated app updates directly on Android.
 
 
 ---

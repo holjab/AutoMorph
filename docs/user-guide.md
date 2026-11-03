@@ -24,13 +24,19 @@ Welcome to the AutoMorph user guide! This document explains how to use the web i
   - [4.3 Patching Strategies & Fallback Flow (Strategy 1 vs. Strategy 2)](#43-patching-strategies--fallback-flow-strategy-1-vs-strategy-2)
 - [5. System & Performance Settings](#5-system--performance-settings)
   - [5.1 Low-Spec Mode (Recommended for Free Tier)](#51-low-spec-mode-recommended-for-free-tier)
-  - [5.2 Timezone & Schedule Time](#52-timezone--schedule-time)
-  - [5.3 Retention & Storage Cleanup](#53-retention--storage-cleanup)
+  - [5.2 Repository Delivery Base URL (Optional)](#52-repository-delivery-base-url-optional)
+  - [5.3 Timezone & Schedule Time](#53-timezone--schedule-time)
+  - [5.4 Retention & Storage Cleanup](#54-retention--storage-cleanup)
 - [6. Custom Keystore & Seamless Updates (Morphe App Compatibility)](#6-custom-keystore--seamless-updates-morphe-app-compatibility)
   - [6.1 Why Keystores Matter for Updates](#61-why-keystores-matter-for-updates)
   - [6.2 Exporting and Placing Your Keystore](#62-exporting-and-placing-your-keystore)
 - [7. Email Dispatcher & Notifications](#7-email-dispatcher--notifications)
 - [8. Downloading Builds](#8-downloading-builds)
+- [9. (Optional) Obtainium & F-Droid Sync](#9-optional-obtainium--f-droid-sync)
+  - [9.1 How It Works](#91-how-it-works)
+  - [9.2 1-Tap Import via Obtainium (QR Code & Deep Link)](#92-1-tap-import-via-obtainium-qr-code--deep-link)
+  - [9.3 Adding AutoMorph as an F-Droid Repository (Obtainium & Neo Store)](#93-adding-automorph-as-an-f-droid-repository-obtainium--neo-store)
+  - [9.4 Seamless In-Place App Updates](#94-seamless-in-place-app-updates)
 
 ---
 
@@ -137,11 +143,22 @@ Access the **Settings** tab in the top navigation bar to fine-tune your environm
 * **What it does**: Optimizes memory allocation and builds packages sequentially with garbage collection between steps.
 * **When to enable**: Essential when hosting on an [Oracle Free Tier E2.1.Micro instance](oracle-setup.md) with 1 GB RAM to prevent out-of-memory errors.
 
-### 5.2 Timezone & Schedule Time
+### 5.2 Repository Delivery Base URL (Optional)
+* **What is this for?**: Sets the base URL embedded in your Obtainium configuration and F-Droid repository index for APK downloads.
+* **Automatic Detection**: AutoMorph automatically detects your active tunnels from `.env` (Pangolin, Cloudflare, or Tailscale) and assigns a default address.
+* **When to adjust this**:
+  * If you run multiple tunnels simultaneously (e.g. both Cloudflare and Pangolin) and want to choose which one your phone uses for downloads.
+  * If you do not use an automated tunnel and want to enter your own custom domain or LAN IP.
+  * If you want to use local mode (`localhost:8080`) for local testing.
+* **The Options Dropdown**:
+  * Only lists tunnels that are actively configured in `.env` (unconfigured tunnels are omitted).
+  * Choose **Custom Outside URL** to enter a manual domain or LAN IP.
+
+### 5.3 Timezone & Schedule Time
 * **Schedule Time**: Specify when daily runs should execute (e.g., `03:00` for 3:00 AM).
 * **Timezone**: Set your local IANA timezone (e.g., `America/New_York`, `Europe/London`, `Asia/Tokyo`) so schedules match your local time.
 
-### 5.3 Retention & Storage Cleanup
+### 5.4 Retention & Storage Cleanup
 To prevent your storage disk from filling up:
 * **Max Original Packages**: Number of downloaded source APKs to keep per app before pruning old versions.
 * **Max Patched Packages**: Number of completed patched APKs to retain per app.
@@ -205,10 +222,71 @@ Each report contains direct download links, checksums, and patch summaries.
 
 ## 8. Downloading Builds
 
-You can download completed APKs through multiple avenues:
+You can download completed APKs through several convenient methods:
 1. **Web Dashboard**: Click the **Download** button directly on any completed app card.
 2. **Notification Emails**: Click the branded download button corresponding to your active tunnel ([Pangolin, Tailscale, or Cloudflare](tunnels.md)).
-3. **Mounted Volumes**: Built APKs are stored in the `./apps` directory on the host machine.
+3. **Mounted Host Volumes**: Completed APKs are stored directly in `./apps/patched/` on the host machine.
+4. **(Optional) Automated App Managers**: If you want your phone to automatically pull updates in the background, you can optionally connect [Obtainium or F-Droid](#9-optional-obtainium--f-droid-sync).
+
+---
+
+## 9. (Optional) Obtainium & F-Droid Sync
+
+> [!NOTE]
+> **This feature is completely optional.**
+> You can always download APKs directly from the dashboard or through your email notifications. You only need this section if you use the [Obtainium](https://github.com/ImranR98/Obtainium) Android app or an F-Droid client and want hands-free, automated app updates delivered directly to your device.
+
+If you use Obtainium or an F-Droid client (like F-Droid, Neo Store, or Droid-ify), AutoMorph can act as a personal app repository. It automatically generates:
+1. An **F-Droid v2 Repository Index** (`/repo/index-v2.json`)
+2. An **Obtainium Configuration Export** (`/automorph-obtainium.json`)
+
+### 9.1 How It Works
+
+When AutoMorph finishes building your apps, it updates these live feeds using your server's active address. Your phone's Obtainium app can periodically check this feed in the background:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant AutoMorph as AutoMorph Server
+    participant Feed as F-Droid Feed (/repo/index-v2.json)
+    participant Phone as Android Phone (Obtainium)
+
+    AutoMorph->>AutoMorph: Daily Patching Completes
+    AutoMorph->>Feed: Updates index-v2.json & automorph-obtainium.json
+    Note over Phone,Feed: Scheduled background check
+    Phone->>Feed: Queries latest version & metadata
+    Feed-->>Phone: Returns new APK version & download URL
+    Phone->>Phone: Alerts user / Installs APK update!
+```
+
+### 9.2 1-Tap Import via Obtainium (QR Code & Deep Link)
+
+If you'd like to import all your patched apps into Obtainium at once:
+
+1. Click the **Obtainium Sync** button in the top navigation or on the dashboard.
+2. Choose how to connect:
+   * **From Desktop (Scan QR Code)**: Point your phone camera or barcode scanner at the QR code. It opens an `obtainium://` deep link that prompts Obtainium to add all your apps in one tap.
+   * **From Mobile (1-Tap Direct Link)**: If you are viewing the dashboard on your phone, tap **"1-Tap Add All to Obtainium"**.
+   * **Manual JSON File Import**: Click **Download JSON File** to save `automorph-obtainium.json` and import it in Obtainium via **Settings** › **Import / Export** › **Import** › **From JSON file**.
+
+> [!TIP]
+> If your server is running on `localhost:8080` without any tunnel configured, mobile devices won't be able to reach download links. Simply select your tunnel or LAN URL under **Settings** › **External URL / Access Mode**.
+
+### 9.3 Adding AutoMorph as an F-Droid Repository (Obtainium & Neo Store)
+
+You can also add AutoMorph as an F-Droid repository feed directly in **Obtainium** or **Neo Store**:
+
+> [!NOTE]
+> Currently, the generated F-Droid repository index is unsigned. It works directly with **Obtainium** and **Neo Store** (which support unsigned repositories). Official F-Droid and Droid-ify require signed repository certificates, which will be implemented in a future update.
+
+1. In the Obtainium sync modal, click **Copy F-Droid Repo URL** (`https://<your-url>/repo`).
+2. In your mobile client:
+   * **Obtainium**: Tap **Add App** › paste your repo URL as an F-Droid source.
+   * **Neo Store**: Go to **Settings** › **Repositories** › tap **+** (Add) and paste the URL.
+
+### 9.4 Seamless In-Place App Updates
+
+When paired with a **Custom Keystore** (see [Section 6](#6-custom-keystore--seamless-updates-morphe-app-compatibility)), all updates share identical signatures. When Obtainium detects a new release, Android can update the existing app seamlessly without uninstalling or losing your data.
 
 ---
 

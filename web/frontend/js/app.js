@@ -510,6 +510,17 @@ function setupEventListeners() {
   document.getElementById('btn-reload-settings')?.addEventListener('click', () => loadSettings(true));
   document.getElementById('btn-save-system-settings')?.addEventListener('click', saveSystemSettings);
   document.getElementById('btn-email-test-quick')?.addEventListener('click', sendQuickTestEmail);
+  document.getElementById('setting-endpoint-select')?.addEventListener('change', (e) => {
+    const customGroup = document.getElementById('setting-custom-url-group');
+    if (customGroup) {
+      if (e.target.value === 'custom') {
+        customGroup.classList.remove('hidden');
+        document.getElementById('setting-custom-url')?.focus();
+      } else {
+        customGroup.classList.add('hidden');
+      }
+    }
+  });
 
   const chkMaxOrig = document.getElementById('setting-max-original-enable');
   const inpMaxOrig = document.getElementById('setting-max-original-packages');
@@ -1923,6 +1934,50 @@ function renderSettings(settings) {
     inpMaxLogs.value = sys.max_logs;
   }
 
+  // Repository Ingress & Base URL Selector
+  const selEndpoint = document.getElementById('setting-endpoint-select');
+  const customGroup = document.getElementById('setting-custom-url-group');
+  const inpCustomUrl = document.getElementById('setting-custom-url');
+
+  if (selEndpoint) {
+    selEndpoint.innerHTML = '';
+
+    // 1. Add detected live endpoints (Cloudflare, Pangolin, Tailscale, Local)
+    const available = sys.available_endpoints || [];
+    available.forEach(ep => {
+      if (ep.id === 'custom') return;
+      const opt = document.createElement('option');
+      opt.value = ep.id;
+      opt.textContent = `${ep.icon || '🌐'} ${ep.label} (${ep.base_url})`;
+      selEndpoint.appendChild(opt);
+    });
+
+    // 2. Custom Outside URL option
+    const optCustom = document.createElement('option');
+    optCustom.value = 'custom';
+    optCustom.textContent = '✏️ Custom Outside URL...';
+    selEndpoint.appendChild(optCustom);
+
+    // Set active selection to the current preferred or active endpoint
+    const activeId = (sys.preferred_endpoint && sys.preferred_endpoint !== 'auto') 
+      ? sys.preferred_endpoint 
+      : (sys.active_endpoint_id || (available[0] ? available[0].id : 'local'));
+    selEndpoint.value = activeId;
+
+    // Show/hide custom URL input
+    if (customGroup) {
+      if (activeId === 'custom') {
+        customGroup.classList.remove('hidden');
+      } else {
+        customGroup.classList.add('hidden');
+      }
+    }
+  }
+
+  if (inpCustomUrl) {
+    inpCustomUrl.value = sys.custom_base_url || sys.base_url || '';
+  }
+
   const chkMaxOrig = document.getElementById('setting-max-original-enable');
   const inpMaxOrig = document.getElementById('setting-max-original-packages');
   const origLimit = (sys.max_original_packages !== undefined && sys.max_original_packages !== null && sys.max_original_packages !== '' && String(sys.max_original_packages).toLowerCase() !== 'none')
@@ -2046,6 +2101,9 @@ async function saveSystemSettings() {
       max_logs: Number.isInteger(maxLogsVal) && maxLogsVal > 0 ? maxLogsVal : 5,
       max_original_packages: maxOriginalPackages,
       max_patched_packages: maxPatchedPackages,
+      preferred_endpoint: document.getElementById('setting-endpoint-select')?.value || 'local',
+      custom_base_url: document.getElementById('setting-custom-url')?.value.trim() || null,
+      base_url: document.getElementById('setting-custom-url')?.value.trim() || null,
     };
 
     const res = await fetch('/api/settings/system', {
@@ -5954,6 +6012,16 @@ async function openObtainiumModal(specificPackage = null) {
       }
     }
 
+    const warnEl = document.getElementById('obtainium-localhost-warning');
+    if (warnEl) {
+      const isLocalhost = appsToSync.some(a => (a.url && (a.url.includes('localhost') || a.url.includes('127.0.0.1'))));
+      if (isLocalhost) {
+        warnEl.classList.remove('hidden');
+      } else {
+        warnEl.classList.add('hidden');
+      }
+    }
+
     // Update count text
     const countEl = document.getElementById('obtainium-app-count-text');
     if (countEl) {
@@ -6048,7 +6116,8 @@ function copyObtainiumJson() {
 }
 
 function copyFdroidRepoUrl() {
-  const repoUrl = window.location.origin;
+  const customBase = state.settings?.system?.base_url;
+  const repoUrl = (customBase && customBase.trim()) ? customBase.trim().replace(/\/+$/, '') : window.location.origin;
   navigator.clipboard.writeText(repoUrl).then(() => {
     showToast(`F-Droid Repo URL copied: ${repoUrl}`, 'success');
   }).catch(() => {

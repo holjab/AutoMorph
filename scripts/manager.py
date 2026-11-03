@@ -281,7 +281,9 @@ class Obtanium:
             latest_details = details[latest_version]
             patched_package_name = latest_details['package'].get('patched_package_name', package_name)
             additional_settings = {'appIdOrName': patched_package_name, 'versionExtractionRegEx': r'\d+(\.\d+)+'}
-            apk_list = [[latest_details['file']['file_name'], latest_details['file']['url']]]
+            relative_url = urlparse(latest_details['file']['url']).path.lstrip("/")
+            apk_url = f"{self.base_url}/{relative_url}"
+            apk_list = [[latest_details['file']['file_name'], apk_url]]
 
             app = {
                 'id': patched_package_name,

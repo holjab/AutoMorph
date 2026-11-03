@@ -106,6 +106,9 @@ class SystemSettingsRequest(BaseModel):
     max_logs: int | None = None
     max_original_packages: int | None = None
     max_patched_packages: int | None = None
+    preferred_endpoint: str | None = None
+    custom_base_url: str | None = None
+    base_url: str | None = None
 
 
 class TunnelsSettingsRequest(BaseModel):
@@ -890,7 +893,19 @@ async def serve_patched_files(request: Request, subpath: str = "") -> Response:
 # ---------------------------------------------------------------------------
 
 def _get_base_url(request: Request) -> str:
-    """Detects external public base URL from headers or fallback."""
+    """Detects external public base URL from settings, headers, tunnels, or fallback."""
+    try:
+        cfg_settings = config_manager.get_all_settings()
+        custom_base = cfg_settings.get("system", {}).get("base_url")
+        if custom_base:
+            scripts_dir = str(PROJECT_ROOT / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import dispatcher
+            return dispatcher.normalize_base_url(custom_base)
+    except Exception:
+        pass
+
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
     if host and "localhost" not in host and "127.0.0.1" not in host:
@@ -909,28 +924,41 @@ def _get_base_url(request: Request) -> str:
 
 
 def _ensure_obtainium_files(base_url: str) -> tuple[Path, Path]:
-    """Ensures index-v2.json and obtainium-export.json are present and up to date."""
+    """Ensures index-v2.json and obtainium-export.json are present and match current base_url."""
     state_dir = PROJECT_ROOT / "tools" / "automorph-data" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     export_file = state_dir / "obtainium-export.json"
     index_file = state_dir / "index-v2.json"
     patched_json = state_dir / "patched.json"
 
+    needs_rebuild = False
     if not export_file.is_file() or not index_file.is_file():
-        if patched_json.is_file():
-            try:
-                scripts_dir = str(PROJECT_ROOT / "scripts")
-                if scripts_dir not in sys.path:
-                    sys.path.insert(0, scripts_dir)
-                import manager
-                manager.build_all_jsons(state_dir, patched_json, base_url)
-            except Exception as e:
-                logger.error(f"Error auto-generating Obtainium/FDroid JSONs: {e}")
+        needs_rebuild = True
+    else:
+        try:
+            with open(index_file, "r", encoding="utf-8") as f:
+                idx = json.load(f)
+                if idx.get("repo", {}).get("address") != base_url:
+                    needs_rebuild = True
+        except Exception:
+            needs_rebuild = True
+
+    if needs_rebuild and patched_json.is_file():
+        try:
+            scripts_dir = str(PROJECT_ROOT / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import manager
+            manager.build_all_jsons(state_dir, patched_json, base_url)
+        except Exception as e:
+            logger.error(f"Error auto-generating Obtainium/FDroid JSONs: {e}")
 
     return export_file, index_file
 
 
 @app.get("/index-v2.json")
+@app.get("/repo/index-v2.json")
+@app.get("/fdroid/repo/index-v2.json")
 async def serve_fdroid_index(request: Request):
     """
     Serves the F-Droid v2 repository index for Obtainium and F-Droid clients.
