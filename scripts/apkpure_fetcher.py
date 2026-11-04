@@ -1526,14 +1526,55 @@ def query_aptoide(
 # STEP 0: SOURCES
 # ==========================================================================
 
-def check_sources_yaml(package_name: str, target_version: str, sources_file: Path) -> dict | bool:
-    if not sources_file.is_file():
-        return False
-    
-    with open(sources_file, "r", encoding="utf-8") as f:
-        sources = yaml.safe_load(f) or {}
+def load_app_sources(sources_path: Path | str | None = None, project_root: Path | None = None) -> dict:
+    """
+    Loads upstream built-in defaults and overlays user/host customizations on top.
+    Prevents configuration drift in containerized environments (Docker bind mounts).
+    """
+    if project_root is None:
+        project_root = Path(__file__).resolve().parent.parent
 
-    if package_name not in sources:
+    combined_sources: dict = {}
+
+    # 1. Base Layer: Built-in defaults shipped inside the repository/image
+    defaults_file = project_root / "defaults" / "app_sources.yaml"
+    if defaults_file.is_file():
+        try:
+            with open(defaults_file, "r", encoding="utf-8") as f:
+                combined_sources.update(yaml.safe_load(f) or {})
+        except Exception as e:
+            logger.warning(f"Failed to read default app sources from {defaults_file}: {e}")
+
+    # 2. User Layer: Host customizations / overrides
+    user_candidates: list[Path] = []
+    if sources_path:
+        user_candidates.append(Path(sources_path))
+    user_candidates.extend([
+        project_root / "tools" / "automorph-data" / "custom_sources.yaml",
+        project_root / "tools" / "automorph-data" / "app_sources.yaml",
+        project_root / "tools" / "custom_sources.yaml",
+        project_root / "tools" / "app_sources.yaml",
+    ])
+
+    user_file = next((p for p in user_candidates if p and p.is_file() and p.resolve() != defaults_file.resolve()), None)
+    if user_file:
+        try:
+            with open(user_file, "r", encoding="utf-8") as f:
+                user_sources = yaml.safe_load(f) or {}
+                combined_sources.update(user_sources)
+        except Exception as e:
+            logger.warning(f"Failed to read user app sources from {user_file}: {e}")
+
+    return combined_sources
+
+
+def check_sources_yaml(package_name: str, target_version: str, sources_file: Path | dict | None = None) -> dict | bool:
+    if isinstance(sources_file, dict):
+        sources = sources_file
+    else:
+        sources = load_app_sources(sources_file)
+
+    if not sources or package_name not in sources:
         return False
 
     logger.info(f"{package_name} exists in custom sources!")
@@ -1574,15 +1615,9 @@ def make_html_index_dl_link(
         logger.warning(f"No links found on HTML source for package {package_name}")
         return None, target_version
 
-    if pkg_conf is None and sources_file and Path(sources_file).is_file():
-        try:
-            with open(sources_file, "r", encoding="utf-8") as f:
-                srcs = yaml.safe_load(f) or {}
-                pkg_conf = srcs.get(package_name, {})
-        except Exception:
-            pkg_conf = {}
-    elif pkg_conf is None:
-        pkg_conf = {}
+    if pkg_conf is None:
+        srcs = sources_file if isinstance(sources_file, dict) else load_app_sources(sources_file)
+        pkg_conf = srcs.get(package_name, {}) if isinstance(srcs, dict) else {}
 
     is_most_recent = (
         str(target_version).strip().lower() in ("0.0.0", "latest", "any", "any / latest")
@@ -1648,15 +1683,9 @@ def make_github_dl_link(package_name: str, target_version: str, repo: str, patte
         log("GitHub", f"No repository configured for {package_name}.")
         return None, target_version
 
-    if pkg_conf is None and sources_file and Path(sources_file).is_file():
-        try:
-            with open(sources_file, "r", encoding="utf-8") as f:
-                srcs = yaml.safe_load(f) or {}
-                pkg_conf = srcs.get(package_name, {})
-        except Exception:
-            pkg_conf = {}
-    elif pkg_conf is None:
-        pkg_conf = {}
+    if pkg_conf is None:
+        srcs = sources_file if isinstance(sources_file, dict) else load_app_sources(sources_file)
+        pkg_conf = srcs.get(package_name, {}) if isinstance(srcs, dict) else {}
 
     is_most_recent = (
         str(target_version).strip().lower() in ("0.0.0", "latest", "any", "any / latest")
@@ -2440,21 +2469,12 @@ def get_latest_version(
         "html": "HTML",
     }
 
-    # Step 1: Check Custom Mappings First (e.g. GitHub releases in app_sources.yaml)
-    if sources_file is None:
-        default_sources = Path(__file__).resolve().parent.parent / "tools" / "automorph-data" / "app_sources.yaml"
-        if not default_sources.is_file():
-            default_sources = Path(__file__).resolve().parent.parent / "tools" / "app_sources.yaml"
-        if default_sources.is_file():
-            sources_file = default_sources
-
-    if sources_file and Path(sources_file).is_file():
-        try:
-            with open(sources_file, "r", encoding="utf-8") as f:
-                sources = yaml.safe_load(f) or {}
-            if package_name in sources:
-                src_conf = sources[package_name]
-                if isinstance(src_conf, dict):
+    # Step 1: Check Custom Mappings First (e.g. GitHub releases or HTML indices in app_sources.yaml)
+    try:
+        sources = sources_file if isinstance(sources_file, dict) else load_app_sources(sources_file)
+        if package_name in sources:
+            src_conf = sources[package_name]
+            if isinstance(src_conf, dict):
                     src_type = src_conf.get("type")
                     pattern = src_conf.get("asset_pattern", r"\.apk$")
                     target_arch = src_conf.get("arch") or arch
@@ -2507,8 +2527,8 @@ def get_latest_version(
                                     "html": html_clean_ver,
                                 },
                             }
-        except Exception as e:
-            logger.warning(f"Custom sources lookup failed for {package_name}: {e}")
+    except Exception as e:
+        logger.warning(f"Custom sources lookup failed for {package_name}: {e}")
 
     # Step 2: Concurrent Multi-Source Probing
     logger.info(f" ├── Probing sources for latest {package_name} ({arch})...")
@@ -2885,25 +2905,14 @@ if __name__ == "__main__":
     import argparse
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    default_sources = Path(__file__).resolve().parent.parent / "tools/automorph-data/app_sources.yaml"
-
-    parser = argparse.ArgumentParser(description="Fetch APK metadata and download links across scrapers.")
-    parser.add_argument("package", nargs="?", help="Android package name (e.g. epixler.de.hypnobox_android)")
-    parser.add_argument("version", nargs="?", help="Target version or constraint (e.g. 4.2.81, 'v>=4.2.81', latest)")
-    parser.add_argument("arch", nargs="?", default="arm64-v8a", help="Target architecture (default: arm64-v8a)")
-    parser.add_argument("-p", "--package-name", dest="flag_pkg", help="Alternative flag for package name")
-    parser.add_argument("-v", "--version-name", dest="flag_ver", help="Alternative flag for target version")
-    parser.add_argument("-a", "--arch", dest="flag_arch", default="arm64-v8a", help="Alternative flag for architecture")
-    parser.add_argument("-l", "--latest", action="store_true", help="Resolve latest available version across sources")
-    parser.add_argument("--allow-betas", action="store_true", help="Allow beta/prerelease versions during latest resolution")
-    parser.add_argument("--sources", default=str(default_sources), help="Path to app_sources.yaml")
+    parser.add_argument("--sources", default=None, help="Optional path to custom app sources YAML (defaults to layered merge)")
     parser.add_argument("--check-apkmirror", action="store_true", help="Proactively check APKMirror")
 
     args = parser.parse_args()
     pkg = args.package or args.flag_pkg
     ver = args.version or args.flag_ver
     arch = args.flag_arch if args.flag_pkg else args.arch
-    sources_path = Path(args.sources)
+    sources_path = Path(args.sources) if args.sources else None
 
     if pkg:
         if args.latest or ver in ("latest", "resolve-latest", "0.0.0"):

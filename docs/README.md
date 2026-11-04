@@ -28,6 +28,7 @@ Choose a guide below to get started:
   * Triggering builds, daily schedules, and understanding **patching strategies (Strategy 1 vs. 2)**.
   * Using a **custom keystore** for seamless in-place updates with the Morphe mobile app.
   * Enabling **Low-Spec Mode** for 1GB RAM instances.
+  * Understanding **download priority order** and adding **custom app sources** (`custom_sources.yaml`).
   * Setting up automated email build notifications and downloading APKs.
   * *(Optional)* Connecting with **Obtainium & F-Droid** for automated app updates directly on Android.
 

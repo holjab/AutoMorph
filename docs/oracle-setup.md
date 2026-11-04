@@ -212,6 +212,12 @@ Key configuration areas:
    # or COMPOSE_PROFILES=cloudflare
    ```
    *(Tailscale runs directly on the host, so it does not need a compose profile).*
+4. **Google Play Authentication (Recommended for Oracle)**:
+   Google frequently blocks or rate-limits anonymous Aurora Store dispenser tokens on Oracle Cloud IP ranges. If you want reliable Google Play downloads on your Oracle VPS, configure a dedicated, disposable Google account:
+   * `GOOPDL_ACCOUNT_EMAIL`: Your disposable Google account email.
+   * `GOOPDL_AAS_TOKEN`: Your generated AAS token (see the [apkeep Google Play Guide](https://github.com/EFForg/apkeep/blob/master/USAGE-google-play.md) for how to generate this).
+   > [!WARNING]
+   > Always use a secondary, disposable Google account for this purpose — never your primary personal account.
 
 To save and exit in `nano`:
 * Press `Ctrl + O`, then `Enter` to save.

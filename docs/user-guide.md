@@ -15,6 +15,8 @@ Welcome to the AutoMorph user guide! This document explains how to use the web i
   - [2.1 Add Package Wizard](#21-add-package-wizard)
   - [2.2 Choosing Patch Repositories](#22-choosing-patch-repositories)
   - [2.3 Enabling and Disabling Apps](#23-enabling-and-disabling-apps)
+  - [2.4 How AutoMorph Fetches APKs (Download Source Priority)](#24-how-automorph-fetches-apks-download-source-priority)
+  - [2.5 Custom App Sources & Layered Configuration (`custom_sources.yaml`)](#25-custom-app-sources--layered-configuration-custom_sourcesyaml)
 - [3. Customizing Patch Options & Patch Aliases](#3-customizing-patch-options--patch-aliases)
   - [3.1 Patch Selection & Options](#31-patch-selection--options)
   - [3.2 Patch Aliases (Cross-Repository Patch Mapping)](#32-patch-aliases-cross-repository-patch-mapping)
@@ -63,6 +65,71 @@ Specify which patch repository to use for the app (e.g., ReVanced, Morphe patche
 Each app card features a toggle switch:
 * **Enabled (ON)**: Included in daily scheduled patching checks.
 * **Disabled (OFF)**: Kept in your configuration but skipped during automated runs.
+
+### 2.4 How AutoMorph Fetches APKs (Download Source Priority)
+When AutoMorph needs to download an original base APK to patch, it attempts to acquire it through a strict priority order:
+
+```mermaid
+flowchart LR
+    A[Package Download Request] --> B[1. Known / Custom Sources<br/>HTML & GitHub Releases]
+    B -->|Found| S[Download APK]
+    B -->|Not Configured / Failed| C[2. Google Play<br/>Direct Retail via goopdl]
+    C -->|Success| S
+    C -->|Unavailable / Failed| D[3. Fallback Scrapers<br/>Uptodown → APKCombo → APKPure → Aptoide]
+    D -->|Success| S
+    D -->|All Failed| F[Build Failure Logged]
+```
+
+1. **Known / Custom Sources (`html` / `github`)**:
+   - Curated direct developer sources, such as Tasker's official release server or GitHub Releases (e.g. Infinity).
+   - If an app is configured in known sources, AutoMorph **always prioritizes this first**.
+2. **Google Play (`gplay`)**:
+   - Direct downloads of official Google Play retail builds via `goopdl`.
+   - Used as the primary source for standard Play Store apps whenever a custom source is not specified.
+   - **Authentication**: If you provide `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN` in your `.env` file, AutoMorph authenticates directly through your account. If omitted, it automatically falls back to anonymous session tokens (Aurora Store token dispenser).
+   - > [!NOTE]
+   - > **Oracle Cloud & VPS Caveat**: Anonymous Aurora Store dispenser tokens frequently get blocked or rate-limited on cloud datacenter IP ranges (especially Oracle Cloud servers). If you host AutoMorph on an Oracle VPS or experience Google Play download timeouts, configure a dedicated, disposable Google account with an AAS token in `.env` (never use your personal account). See the [Oracle Setup Guide](oracle-setup.md#32-configure-env) for instructions.
+3. **Fallback Public Scrapers (In Order: Uptodown → APKCombo → APKPure → Aptoide)**:
+   - If Google Play fails, or if an app is paid, region-restricted, or requires an older version, AutoMorph sequentially probes public mirrors in priority order to find a verified version code and download link matching your target architecture.
+
+### 2.5 Custom App Sources & Layered Configuration (`custom_sources.yaml`)
+AutoMorph uses a **2-tier layered configuration** for known download sources:
+
+* **Built-in Defaults (`defaults/app_sources.yaml`)**:
+  Shipped directly inside the AutoMorph image and repository. These contain verified community sources (like Tasker and Infinity) and update automatically whenever you update AutoMorph (`docker compose pull`).
+* **User Customizations (`tools/automorph-data/custom_sources.yaml` or `app_sources.yaml`)**:
+  Located in your host-mounted volume. You can add private GitHub releases, direct web directory downloads, or override built-in settings.
+
+#### How Layering Works:
+AutoMorph loads the built-in defaults first, then layers your custom file on top in memory at runtime:
+* **Zero Maintenance**: You never need to manually copy or sync upstream source updates into your host volume.
+* **Full Overrides**: Any package key you define in your host file takes precedence over the built-in default.
+
+#### Configuration Examples:
+To add your own custom app source, create or edit `tools/automorph-data/custom_sources.yaml` (or `app_sources.yaml`):
+
+```yaml
+# Example 1: Direct HTML Directory (like Tasker)
+net.dinglisch.android.taskerm:
+  type: html
+  target_url: https://tasker.joaoapps.com/releases/playstore/
+  asset_pattern: '^Tasker\.(?P<version>\d+(\.\d+)+[a-zA-Z0-9_-]*)\.apk$'
+
+# Example 2: GitHub Releases (like Infinity)
+ml.docilealligator.infinityforreddit.plus:
+  type: github
+  repo: Docile-Alligator/Infinity-For-Reddit
+  asset_pattern: '^Infinity\+-v.*\.apk$'
+
+# Example 3: Private or Custom Repository
+com.example.mycustomapp:
+  type: github
+  repo: myusername/my-custom-app
+  asset_pattern: '.*-arm64-v8a\.apk$'
+```
+
+> [!TIP]
+> **Contributing Sources Upstream**: If you have created a working source definition for a popular app and would like to contribute it to the project so that all AutoMorph users can benefit from it out-of-the-box, please open an issue on GitHub! If appropriate, we'll review it and merge it into the built-in default list.
 
 ---
 

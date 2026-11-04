@@ -1,3 +1,15 @@
+# ==============================================================================
+# UPSTREAM BUILT-IN APP SOURCES (AutoMorph Defaults)
+# ==============================================================================
+# These sources ship with AutoMorph and are automatically updated with new releases.
+# To override settings or add private/custom apps, create or edit:
+#   tools/automorph-data/custom_sources.yaml (or app_sources.yaml)
+# Custom configurations automatically overlay on top of these defaults at runtime.
+#
+# Want to contribute a source upstream? Open an issue/ticket on GitHub and we will
+# add it to the default list if appropriate!
+# ==============================================================================
+
 # Infinity+
 ml.docilealligator.infinityforreddit.plus:
   type: github
