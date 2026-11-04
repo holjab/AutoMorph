@@ -10,6 +10,14 @@ from zipfile import ZipFile
 from pyaxmlparser.axmlprinter import AXMLPrinter
 import re
 
+try:
+    from migrate_patched_json import migrate_patched_json
+except ImportError:
+    try:
+        from scripts.migrate_patched_json import migrate_patched_json
+    except ImportError:
+        migrate_patched_json = None
+
 logger = logging.getLogger(__name__)
 
 class Patched:
@@ -384,6 +392,8 @@ def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, 
     patched_json = state_dir / "patched.json"
 
     if patched_json.is_file():
+        if migrate_patched_json:
+            migrate_patched_json(patched_json)
         patched_data = read_json(patched_json) or {}
 
     p = Patched(repo_details, detailed_patch_list, base_url, morphe_location, patched_data, arch, enabled_patches_per_app)
@@ -394,6 +404,8 @@ def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, 
     write_json(p.patched_data, patched_json)
 
 def clean(max_original_packages: int, max_patched_packages:int, state_dir: Path, original_dir: Path, patched_dir: Path, patched_json: Path) -> None:
+    if migrate_patched_json and patched_json.is_file():
+        migrate_patched_json(patched_json)
     patched_results = read_json(patched_json)
     cleaner = Cleaner(patched_results, patched_dir, original_dir, patched_json, max_original_packages, max_patched_packages)
 
@@ -414,6 +426,8 @@ def build_all_jsons(state_dir: Path, patched_json: Path, base_url: str) -> None:
     to_write = {}
     indexv2 = state_dir / "index-v2.json"
 
+    if migrate_patched_json and patched_json.is_file():
+        migrate_patched_json(patched_json)
     patched_results = read_json(patched_json)
     existing_index = read_json(indexv2)
 

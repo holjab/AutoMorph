@@ -57,3 +57,5 @@ playwright-report/
 .playwright/
 playwright.config.ts
 tests/
+
+MIGRATION_CLEANUP_V1.md
