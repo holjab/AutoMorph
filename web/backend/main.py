@@ -333,6 +333,18 @@ async def startup_event() -> None:
     # Ensure default config.yaml and app_sources.yaml exist
     config_manager.ensure_config_exists()
 
+    # Check and migrate legacy patched.json schema if present (pre-v1.0 migration)
+    try:
+        scripts_dir = str(PROJECT_ROOT / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import migrate_patched_json
+        patched_json_file = PROJECT_ROOT / "tools" / "automorph-data" / "state" / "patched.json"
+        if patched_json_file.is_file():
+            migrate_patched_json.migrate_patched_json(patched_json_file)
+    except Exception as e:
+        logger.warning(f"Could not check/migrate patched.json on startup: {e}")
+
     # Apply configured system timezone
     config_manager.apply_timezone()
 

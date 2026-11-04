@@ -44,3 +44,5 @@ node_modules/
 test-results/
 playwright-report/
 .playwright/
+
+MIGRATION_CLEANUP_V1.md
