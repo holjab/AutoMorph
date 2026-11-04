@@ -1539,6 +1539,101 @@ def check_sources_yaml(package_name: str, target_version: str, sources_file: Pat
     logger.info(f"{package_name} exists in custom sources!")
     return sources
 
+def html_scrape(target_url: str) -> list | None:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        response = requests.get(target_url, headers=headers, timeout=15)
+        response.raise_for_status()
+    except Exception as e:
+        logger.warning(f"Failed to fetch directory {target_url}: {e}")
+        return None
+    
+    soup = BeautifulSoup(response.text, "html.parser")
+    all_links = [a["href"] for a in soup.find_all("a", href=True)]
+    return all_links
+
+
+def make_html_index_dl_link(
+    package_name: str,
+    target_version: str,
+    target_url: str,
+    pattern: str,
+    arch: str,
+    sources_file: Path | None,
+    pkg_conf: dict | None = None
+) -> tuple[str | None, str]:
+    if not target_url:
+        logger.warning(f"No url provided for HTML source for package {package_name}")
+        return None, target_version
+
+    all_links = html_scrape(target_url)
+    if not all_links:
+        logger.warning(f"No links found on HTML source for package {package_name}")
+        return None, target_version
+
+    if pkg_conf is None and sources_file and Path(sources_file).is_file():
+        try:
+            with open(sources_file, "r", encoding="utf-8") as f:
+                srcs = yaml.safe_load(f) or {}
+                pkg_conf = srcs.get(package_name, {})
+        except Exception:
+            pkg_conf = {}
+    elif pkg_conf is None:
+        pkg_conf = {}
+
+    is_most_recent = (
+        str(target_version).strip().lower() in ("0.0.0", "latest", "any", "any / latest")
+        or str(pkg_conf.get("version", "")).strip().lower() in ("most_recent", "latest", "any")
+    )
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        logger.error(f"Invalid regex pattern '{pattern}' for {package_name}: {e}")
+        return None, target_version
+
+    candidates: list[tuple[str, str]] = []
+
+    for link in all_links:
+        filename = link.split("?")[0].split("/")[-1]
+        match = regex.match(filename)
+        if match:
+            if "version" in match.groupdict():
+                extracted_version = match.group("version")
+            elif match.groups():
+                extracted_version = match.group(1)
+            else:
+                extracted_version = filename
+            candidates.append((extracted_version, link))
+
+    if not candidates:
+        logger.warning(f"No APK matching pattern '{pattern}' found at {target_url}")
+        return None, target_version
+
+    if is_most_recent:
+        def version_key(cand: tuple[str, str]) -> tuple[int, ...]:
+            digits = [int(n) for n in re.findall(r"\d+", cand[0])]
+            return tuple(digits) if digits else (0,)
+
+        best_cand = max(candidates, key=version_key)
+        best_ver, best_link = best_cand
+        resolved_url = urllib.parse.urljoin(target_url, best_link)
+        logger.info(f" └── [✓] Found latest HTML asset: {best_link.split('/')[-1]} (v{best_ver})")
+        return resolved_url, best_ver
+
+    clean_target = str(target_version).strip().lstrip("vV")
+    for ver_str, link in candidates:
+        clean_cand = str(ver_str).strip().lstrip("vV")
+        if clean_cand == clean_target or re.match(rf"^{re.escape(clean_target)}[a-zA-Z]+$", clean_cand):
+            resolved_url = urllib.parse.urljoin(target_url, link)
+            logger.info(f" └── [✓] Found matching HTML asset: {link.split('/')[-1]} (v{ver_str})")
+            return resolved_url, ver_str
+
+    logger.warning(f"Failed: No HTML asset matched version '{target_version}' at {target_url}")
+    return None, target_version
 
 def make_github_dl_link(package_name: str, target_version: str, repo: str, pattern: str, arch: str, sources_file: Path | None, pkg_conf: dict | None = None) -> tuple[str | None, str]:
     headers = {
@@ -2342,6 +2437,7 @@ def get_latest_version(
         "apkcombo": "APKCombo",
         "apkpure": "APKPure",
         "github": "GitHub",
+        "html": "HTML",
     }
 
     # Step 1: Check Custom Mappings First (e.g. GitHub releases in app_sources.yaml)
@@ -2358,33 +2454,61 @@ def get_latest_version(
                 sources = yaml.safe_load(f) or {}
             if package_name in sources:
                 src_conf = sources[package_name]
-                if isinstance(src_conf, dict) and src_conf.get("type") == "github":
-                    repo = src_conf.get("repo")
+                if isinstance(src_conf, dict):
+                    src_type = src_conf.get("type")
                     pattern = src_conf.get("asset_pattern", r"\.apk$")
                     target_arch = src_conf.get("arch") or arch
-                    git_link, git_ver = make_github_dl_link(
-                        package_name=package_name,
-                        target_version="0.0.0",
-                        repo=repo,
-                        pattern=pattern,
-                        arch=target_arch,
-                        sources_file=sources_file,
-                    )
-                    git_clean_ver = normalise_version(git_ver) or git_ver
-                    if git_clean_ver and git_clean_ver != "0.0.0":
-                        logger.info(f" └── [✓] Resolved latest GitHub release: v{git_clean_ver} ({repo})")
-                        return {
-                            "package_name": package_name,
-                            "version": git_clean_ver,
-                            "version_code": None,
-                            "winning_source": "github",
-                            "arch": arch,
-                            "sources_checked": {
-                                "github": git_clean_ver,
-                            },
-                        }
+
+                    if src_type == "github":
+                        repo = src_conf.get("repo")
+                        git_link, git_ver = make_github_dl_link(
+                            package_name=package_name,
+                            target_version="0.0.0",
+                            repo=repo,
+                            pattern=pattern,
+                            arch=target_arch,
+                            sources_file=sources_file,
+                        )
+                        git_clean_ver = normalise_version(git_ver) or git_ver
+                        if git_clean_ver and git_clean_ver != "0.0.0":
+                            logger.info(f" └── [✓] Resolved latest GitHub release: v{git_clean_ver} ({repo})")
+                            return {
+                                "package_name": package_name,
+                                "version": git_clean_ver,
+                                "version_code": None,
+                                "winning_source": "github",
+                                "arch": arch,
+                                "sources_checked": {
+                                    "github": git_clean_ver,
+                                },
+                            }
+
+                    elif src_type == "html":
+                        target_url = src_conf.get("target_url") or src_conf.get("url")
+                        html_link, html_ver = make_html_index_dl_link(
+                            package_name=package_name,
+                            target_version="0.0.0",
+                            target_url=target_url,
+                            pattern=pattern,
+                            arch=target_arch,
+                            sources_file=sources_file,
+                            pkg_conf=src_conf,
+                        )
+                        html_clean_ver = normalise_version(html_ver) or html_ver
+                        if html_clean_ver and html_clean_ver != "0.0.0":
+                            logger.info(f" └── [✓] Resolved latest HTML release: v{html_clean_ver} ({target_url})")
+                            return {
+                                "package_name": package_name,
+                                "version": html_clean_ver,
+                                "version_code": None,
+                                "winning_source": "html",
+                                "arch": arch,
+                                "sources_checked": {
+                                    "html": html_clean_ver,
+                                },
+                            }
         except Exception as e:
-            log("GitHub", f"Custom sources lookup failed for {package_name}: {e}")
+            logger.warning(f"Custom sources lookup failed for {package_name}: {e}")
 
     # Step 2: Concurrent Multi-Source Probing
     logger.info(f" ├── Probing sources for latest {package_name} ({arch})...")
@@ -2493,6 +2617,7 @@ def process_package(
     static_sources = check_sources_yaml(package_name, target_version, sources_file)
 
     git_dl_link = None
+    html_dl_link = None
     resolved_version_name = None
     version_code = None
     apkpure_dl_link = None
@@ -2506,18 +2631,36 @@ def process_package(
 
     if static_sources:
         pkg_conf = static_sources[package_name]
-        repo = pkg_conf.get("repo")
+        src_type = pkg_conf.get('type')
         pattern = pkg_conf.get("asset_pattern", r"\.apk$")
         arch = pkg_conf.get("arch") or arch
-        git_dl_link, resolved_target_version = make_github_dl_link(
-            package_name, target_version, repo, pattern, arch, sources_file, pkg_conf=pkg_conf
-        )
-        if git_dl_link:
-            resolved_version_name = normalise_version(resolved_target_version) or resolved_target_version
-        else:
-            log("GitHub", f"Custom source lookup failed for {package_name}. Falling back to other sources...")
 
-    if not git_dl_link:
+        if src_type == 'github':
+            repo = pkg_conf.get("repo")
+            git_dl_link, resolved_target_version = make_github_dl_link(
+                package_name, target_version, repo, pattern, arch, sources_file, pkg_conf=pkg_conf
+            )
+            if git_dl_link:
+                resolved_version_name = normalise_version(resolved_target_version) or resolved_target_version
+            else:
+                log("GitHub", f"Custom source lookup failed for {package_name}. Falling back to other sources...")
+
+        elif src_type == 'html':
+            target_url = pkg_conf.get('target_url') or pkg_conf.get('url')
+            html_dl_link, resolved_target_version = make_html_index_dl_link(
+                package_name, target_version, target_url, pattern, arch, sources_file, pkg_conf=pkg_conf
+            )
+            if html_dl_link:
+                resolved_version_name = normalise_version(resolved_target_version) or resolved_target_version
+            else:
+                logger.warning(f"HTML source lookup failed for {package_name}. Falling back to other sources...")
+
+        else:
+            logger.warning(f"Unknown type '{src_type}' discovered in app_sources.yaml for {package_name}")
+
+    custom_dl_link = git_dl_link or html_dl_link
+
+    if not custom_dl_link:
         if target_version.lower() in ("latest", "any", "any / latest", "0.0.0"):
             logger.info(f"[*] Resolving latest version for {package_name} across sources...")
             latest_res = get_latest_version(package_name, arch=arch, sources_file=sources_file)
@@ -2706,6 +2849,7 @@ def process_package(
     # ==========================================================================
 
     sources = {
+        "html": html_dl_link,
         "GitHub": git_dl_link,
         "gplay": None,
         "uptodown": uptodown_dl_link,
@@ -2720,6 +2864,7 @@ def process_package(
         "versioncode": version_code,
         "arch": arch,
         "sources": sources,
+        "html_dl_link": html_dl_link,
         "apkpure_dl_link": apkpure_dl_link,
         "apkcombo_dl_link": apkcombo_dl_link,
         "uptodown_dl_link": uptodown_dl_link,

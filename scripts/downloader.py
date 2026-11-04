@@ -290,11 +290,31 @@ class Downloader:
             if token:
                 headers["Authorization"] = f"Bearer {token}"
 
-        elif source =="uptodown":
+        elif source == "uptodown":
             dest_file = outer_dir / f"{package_name}.xapk"
             headers = {
                 "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8 Pro Build/BP4A.260205.001)",
                 "Accept": "*/*",
+            }
+
+        elif source == "html":
+            dest_file = outer_dir / f"{package_name}.apk"
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),   
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/octet-stream,*/*;q=0.8",  
+                "Accept-Language": "en-US,en;q=0.9",   
+                "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",          
+                "Upgrade-Insecure-Requests": "1",
+                "Connection": "keep-alive",
             }
 
         temp_file = dest_file.with_suffix(".tmp")

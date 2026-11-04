@@ -54,7 +54,14 @@ LocalDream_armv8a_3.0.0-alpha.3.apk:
   repo: xororz/local-dream
   asset_pattern: 'LocalDream_armv8a_.*\.apk$'
 
-  org.cygnusx1.continuum:
-    type: github
-    repo: cygnusx-1-org/continuum
-    asset_pattern: 'continuum-arm64-v8a-.*\.apk$'
+org.cygnusx1.continuum:
+  type: github
+  repo: cygnusx-1-org/continuum
+  asset_pattern: 'continuum-arm64-v8a-.*\.apk$'
+
+#tasker
+net.dinglisch.android.taskerm:
+  type: html
+  target_url: https://tasker.joaoapps.com/releases/playstore/
+  asset_pattern: '^Tasker\.(?P<version>\d+(\.\d+)+[a-zA-Z0-9_-]*)\.apk$'
+
