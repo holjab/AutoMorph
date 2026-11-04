@@ -249,21 +249,19 @@ By sharing a keystore:
 
 ### 6.2 Exporting and Placing Your Keystore
 
-AutoMorph's patching engine looks for keystore files in the Morphe data root directory: `tools/morphe-data/`.
-
-Because `./tools/morphe-data` is mounted to `/automorph/tools/morphe-data:rw` in `compose.yaml`, files placed in this folder on your host machine are immediately available to the patcher and persist across container updates.
+AutoMorph's patching engine looks for keystore files in `tools/morphe-data/`.
 
 #### Step-by-Step Instructions:
-1. **Export from the Morphe Android App** (if using the mobile app):
-   * Open the **Morphe app** on your Android device.
-   * Navigate to **Settings** › **Keystore**.
-   * Tap **Export keystore** and save the file (e.g., `morphe.keystore`).
-2. **Place the File in AutoMorph**:
-   * Copy your exported keystore file into the `tools/morphe-data/` folder on your AutoMorph host:
+1. **Export from the Morphe Android App**:
+   * In the Morphe app, navigate to **Settings** › **Signing key** (or **Keystore**).
+   * Tap **Export keystore** (saved as `Morphe.p12` or `morphe.keystore`).
+2. **Copy and Rename**:
+   * Copy the exported file into `tools/morphe-data/` and ensure it is named **`morphe.keystore`**:
      ```bash
-     cp /path/to/exported.keystore ./tools/morphe-data/morphe.keystore
+     cp /path/to/Morphe.p12 ./tools/morphe-data/morphe.keystore
      ```
-   * Ensure the file is named `morphe.keystore` (or `Morphe.keystore`).
+   > [!IMPORTANT]
+   > The file must be placed in `tools/morphe-data/` and named `morphe.keystore` (even if exported as `Morphe.p12`). If not found, AutoMorph will silently generate a new default keystore instead, causing signature mismatch errors on update.
 3. **Automatic Detection**:
    * AutoMorph will automatically use this keystore for all subsequent builds. No restart or container rebuild is required!
 
