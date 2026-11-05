@@ -1,4 +1,6 @@
-requests
+requests[socks]
+PySocks
+httpx[socks]
 PyYAML
 beautifulsoup4
 python-dotenv

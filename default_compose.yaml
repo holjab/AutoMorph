@@ -8,6 +8,7 @@ services:
     environment:
       - TAILSCALE_FUNNEL_URL=${TAILSCALE_FUNNEL_URL:-}
       - BASE_URL=${BASE_URL:-}
+      - PROXY=${PROXY:-}
     env_file:
       - .env
     volumes:

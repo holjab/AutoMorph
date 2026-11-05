@@ -164,6 +164,12 @@ To prevent your storage disk from filling up:
 * **Max Patched Packages**: Number of completed patched APKs to retain per app.
 * **Max Logs**: Number of historical build log files to keep.
 
+### 5.5 Upstream Proxy (Optional)
+* **What it does**: Routes all upstream connections (APKPure, APKMirror, APKCombo, Uptodown, Aptoide, Google Play Store via `goopdl`, GitHub releases, and update checks) through an HTTP or SOCKS5 proxy.
+* **How to configure**:
+  * Set the `PROXY` environment variable in `compose.yaml` or `.env` (e.g. `PROXY=http://127.0.0.1:8080` or `PROXY=socks5://127.0.0.1:1080`).
+  * If the `PROXY` variable is not present or left empty, direct connections are used automatically.
+
 ---
 
 ## 6. Custom Keystore & Seamless Updates (Morphe App Compatibility)
