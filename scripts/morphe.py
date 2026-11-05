@@ -569,11 +569,12 @@ class Morphe:
         return shas
 
 #################################
-#      GET PATCH VERSOINS       #
+#      GET PATCH VERSIONS       #
 #################################
 
     def get_patch_versions_main(self, enabled_patches_per_app: dict[str, dict[str, dict[str, str]]], enabled_repos: set[str]) -> tuple[dict[str, list[str]], dict[str, dict[str, dict[str, tuple[str, tuple[int, ...], str]]]]]:
         enabled_patches_per_app_versions = self.get_patch_versions(enabled_repos, enabled_patches_per_app)
+        logger.debug(f"enabled_patches_per_app_versions:\n{enabled_patches_per_app_versions}")
         package_req = self.find_package_req(enabled_patches_per_app_versions)
         return package_req, enabled_patches_per_app_versions
 

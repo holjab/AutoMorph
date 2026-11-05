@@ -9,6 +9,8 @@ import hashlib
 from zipfile import ZipFile
 from pyaxmlparser.axmlprinter import AXMLPrinter
 import re
+import apkpure_fetcher
+import html
 
 try:
     from migrate_patched_json import migrate_patched_json
@@ -30,7 +32,7 @@ class Patched:
         self.arch = arch
         self.enabled_patches_per_app = enabled_patches_per_app
 
-    def make_patched_data(self, package_name: str, details: dict):
+    def make_patched_data(self, package_name: str, details: dict, morphe_catalogue: dict):
         applied_patches = {}
         patch_aliases = {}
         target_shas = {}
@@ -84,10 +86,18 @@ class Patched:
         version_code = int(vc) if vc is not None else 0
         min_sdk = None
         target_sdk = None
-        clean_name = package_name
         patched_package_name = package_name
         patched_version_code = version_code
         patched_version_name = details['version_name']
+
+        catalogue_entry = (morphe_catalogue.get('store', {}) or {}).get(package_name) if morphe_catalogue else None
+        if not isinstance(catalogue_entry, dict):
+            catalogue_entry = {}
+
+        clean_name = catalogue_entry.get('name') or package_name
+        icon_url = catalogue_entry.get('iconUrl') or ""
+        summary = html.unescape(catalogue_entry.get('description', '').strip()) or "Patched with AutoMorph"
+
 
         try:
             with ZipFile(details['output_dest'], 'r') as z:
@@ -102,12 +112,6 @@ class Patched:
                     raw_target = str(uses_sdk.attrib.get("{http://schemas.android.com/apk/res/android}targetSdkVersion"))
                     min_sdk = int(raw_min) if raw_min and raw_min.isdigit() else None
                     target_sdk = int(raw_target) if raw_target and raw_target.isdigit() else None
-                    
-                app_elem = root.find("application")
-                if app_elem is not None:
-                    label = app_elem.attrib.get("{http://schemas.android.com/apk/res/android}label")
-                    if label and not label.startswith("@"):
-                        clean_name = label
             
         except Exception as e:
             logger.critical(f"\n [!] Failed to read package name from {details['output_dest'].name} - may not function with Obtanium: {e}")
@@ -121,7 +125,11 @@ class Patched:
         morphe_version = morphe.group(1) if morphe else "Unknown"
 
         self.patched_data.setdefault(package_name, {})[patched_version_name] = {
-            'metadata': details['time'],
+            'metadata': {
+                **details['time'],
+                'icon_url': icon_url,
+                'summary': summary
+            },
             'package': {
                 'clean_name': clean_name,
                 'source_package_name': package_name,
@@ -132,7 +140,7 @@ class Patched:
                 'source_version_code': int(version_code),
                 'arch': self.arch,
                 'min_sdk': min_sdk,
-                'target_sdk': target_sdk
+                'target_sdk': target_sdk,
             },
             'file': {
                 'file_name': details['output_dest'].name,
@@ -340,9 +348,11 @@ class FDroid:
             for version, v_details in sorted_details:
                 patched_package_name = v_details['package'].get('patched_package_name', package_name)
                 time = v_details['metadata'].get('time_ms')
+                icon_url = v_details['metadata'].get('icon_url')
           
                 if patched_package_name not in index['packages']:
                     added = self.existing_index.get('packages', {}).get(patched_package_name, {}).get('metadata', {}).get('added')
+                    
                     index['packages'][patched_package_name] = {
                         'metadata': {
                             'added': added or time,
@@ -351,13 +361,20 @@ class FDroid:
                                 'en-US': v_details['package'].get('clean_name', package_name)
                             },
                             'summary': {
-                                'en-US': 'Patched with AutoMorph'
+                                'en-US': v_details['metadata'].get('summary') or "Patched with AutoMorph"
                             },
                             'authorName': 'AutoMorph',
-                            'changelog': 'Patches automatically applied'  
+                            'changelog': 'Patches automatically applied',
                         },
                         'versions': {}
                     }
+                    
+                    if icon_url:
+                        index['packages'][patched_package_name]['metadata']['icon'] = {
+                            'en-US': {
+                                'name': icon_url
+                            }
+                        }
 
                 index['packages'][patched_package_name]['versions'][f"v{version.replace('.', '_')}"] = {
                     'added': time,
@@ -390,16 +407,22 @@ class FDroid:
 def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, morphe_location: Path, state_dir: Path, arch: str, enabled_patches_per_app: dict):
     patched_data = {}
     patched_json = state_dir / "patched.json"
+    morphe_catalogue = state_dir / "morphe_catalog.json"
 
     if patched_json.is_file():
         if migrate_patched_json:
             migrate_patched_json(patched_json)
         patched_data = read_json(patched_json) or {}
-
+    
     p = Patched(repo_details, detailed_patch_list, base_url, morphe_location, patched_data, arch, enabled_patches_per_app)
+    
+    if not morphe_catalogue.is_file():
+        apkpure_fetcher.get_morphe_catalog(force_refresh=True)
+    
+    catalogue = read_json(morphe_catalogue)
 
     for package_name, details in patched.items():
-        p.make_patched_data(package_name, details)
+        p.make_patched_data(package_name, details, catalogue)
 
     write_json(p.patched_data, patched_json)
 
