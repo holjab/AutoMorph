@@ -9,12 +9,24 @@ services:
       - TAILSCALE_FUNNEL_URL=${TAILSCALE_FUNNEL_URL:-}
       - BASE_URL=${BASE_URL:-}
       - PROXY=${PROXY:-}
+      - FLARESOLVERR_URL=${FLARESOLVERR_URL:-}
     env_file:
       - .env
     volumes:
       - ./apps:/automorph/apps:rw
       - ./tools/morphe-data:/automorph/tools/morphe-data:rw
       - ./tools/automorph-data:/automorph/tools/automorph-data:rw
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    profiles: ["flaresolverr"]
+    environment:
+      - LOG_LEVEL=info
+      - CAPTCHA_SOLVER=none
+    ports:
+      - "8191:8191"
 
   cloudflared:
     image: cloudflare/cloudflared:latest

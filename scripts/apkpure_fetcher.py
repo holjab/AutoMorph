@@ -79,6 +79,14 @@ except ImportError:
 if proxy_utils:
     proxy_utils.setup_proxy()
 
+try:
+    import flaresolverr
+except ImportError:
+    try:
+        from . import flaresolverr
+    except ImportError:
+        flaresolverr = None
+
 APKPURE_API = "https://api.pureapk.com/m/v3/cms/app_version"
 APKCOMBO_BASE = "https://apkcombo.com"
 
@@ -271,12 +279,71 @@ def is_version_compatible(candidate_ver: str, op: str, target_tuple: tuple[int, 
 
 def fetch_html(url: str, source: str | None = None) -> str:
     headers = APK_MIRROR_HEADERS if source == "apkmirror" else HEADERS_BROWSER
+
+    # 1. Proactive FlareSolverr for APKMirror:
+    # APKMirror blocks standard automated scrapers with Cloudflare 403.
+    # If FLARESOLVERR_URL is set, immediately bypass via FlareSolverr.
+    if flaresolverr and flaresolverr.is_flaresolverr_enabled() and (source == "apkmirror" or "apkmirror.com" in url):
+        html = flaresolverr.fetch_via_flaresolverr(url)
+        if html:
+            return html
+        log("FlareSolverr", f"Challenge resolution returned empty for {url}; attempting standard request fallback...")
+
+    # 2. Try standard fetch (respects PROXY environment variable if set)
+    last_err: Exception | None = None
     try:
         resp = requests.get(url, headers=headers, timeout=25)
         if resp.ok and len(resp.text) > 200:
-            return resp.text
-    except Exception:
-        pass
+            if "not allowed by policy" not in resp.text and "Just a moment..." not in resp.text:
+                return resp.text
+            else:
+                last_err = RuntimeError(f"Cloudflare challenge or policy block on {url}")
+        else:
+            if resp.status_code == 403:
+                last_err = requests.HTTPError(f"403 Client Error: Forbidden for url: {url}", response=resp)
+    except Exception as e:
+        last_err = e
+
+    # 3. Reactive FlareSolverr fallback for any source (e.g. APKMirror, APKCombo) blocked by Cloudflare
+    if flaresolverr and flaresolverr.is_flaresolverr_enabled():
+        html = flaresolverr.fetch_via_flaresolverr(url)
+        if html:
+            return html
+
+    # 4. APKCombo-specific resilience (mirror domain fallback and proxy error recovery)
+    if "apkcombo." in url:
+        alt_url = None
+        if "apkcombo.com" in url:
+            alt_url = url.replace("apkcombo.com", "apkcombo.app")
+        elif "apkcombo.app" in url:
+            alt_url = url.replace("apkcombo.app", "apkcombo.com")
+
+        if alt_url:
+            try:
+                resp = requests.get(alt_url, headers=HEADERS_BROWSER, timeout=20)
+                if resp.ok and len(resp.text) > 200 and "not allowed by policy" not in resp.text:
+                    return resp.text
+            except Exception:
+                pass
+
+        # If proxy failed to connect to apkcombo (e.g. 503 Service Unavailable), attempt direct connection
+        if isinstance(last_err, requests.exceptions.ProxyError):
+            log("APKCombo", f"Proxy connection failed ({last_err}); attempting direct connection fallback for {url}...")
+            try:
+                with requests.Session() as direct_sess:
+                    direct_sess.trust_env = False
+                    resp = direct_sess.get(url, headers=HEADERS_BROWSER, timeout=20)
+                    if resp.ok and len(resp.text) > 200 and "not allowed by policy" not in resp.text:
+                        return resp.text
+            except Exception as direct_err:
+                log("APKCombo", f"Direct fallback also failed: {direct_err}")
+
+    # 5. Provide clear actionable log when APKMirror is blocked without FlareSolverr
+    if (source == "apkmirror" or "apkmirror.com" in url) and not (flaresolverr and flaresolverr.is_flaresolverr_enabled()):
+        log("APKMirror", "Blocked by Cloudflare (403 Forbidden). Configure FLARESOLVERR_URL in compose/.env to bypass.")
+
+    if last_err is not None:
+        raise last_err
 
     resp = requests.get(url, headers=headers, timeout=30)
     resp.raise_for_status()

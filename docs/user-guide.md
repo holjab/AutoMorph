@@ -170,6 +170,13 @@ To prevent your storage disk from filling up:
   * Set the `PROXY` environment variable in `compose.yaml` or `.env` (e.g. `PROXY=http://127.0.0.1:8080` or `PROXY=socks5://127.0.0.1:1080`).
   * If the `PROXY` variable is not present or left empty, direct connections are used automatically.
 
+### 5.6 FlareSolverr (Cloudflare Challenge Bypass)
+* **What it does**: Bypasses Cloudflare anti-bot verification ("not allowed by policy", 403 Forbidden, and Turnstile challenges) on APKMirror, APKCombo, and other protected sources.
+* **How to configure**:
+  * Enable the built-in FlareSolverr profile in `.env`: `COMPOSE_PROFILES=flaresolverr`
+  * Set `FLARESOLVERR_URL=http://flaresolverr:8191/v1` in `compose.yaml` or `.env`.
+  * For an external instance, specify its URL: `FLARESOLVERR_URL=http://localhost:8191/v1`.
+
 ---
 
 ## 6. Custom Keystore & Seamless Updates (Morphe App Compatibility)

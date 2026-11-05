@@ -93,7 +93,7 @@ def setup_proxy(proxy_url: str | None = None) -> str | None:
     If proxy_url is not passed, reads the PROXY environment variable.
     If proxy is configured, sets:
       - PROXY, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY (and lowercase variants)
-      - NO_PROXY / no_proxy (defaults to localhost,127.0.0.1 if unset)
+      - NO_PROXY / no_proxy (defaults to localhost,127.0.0.1,flaresolverr if unset)
     If proxy is not set or empty, removes any proxy variables that were set
     so that direct connections are made.
     """
@@ -118,10 +118,12 @@ def setup_proxy(proxy_url: str | None = None) -> str | None:
         for var in proxy_env_vars:
             os.environ[var] = target_proxy
 
-        # Ensure local loopback connections do not route through proxy
-        if not os.getenv("NO_PROXY") and not os.getenv("no_proxy"):
-            os.environ["NO_PROXY"] = "localhost,127.0.0.1"
-            os.environ["no_proxy"] = "localhost,127.0.0.1"
+        # Ensure local loopback connections and internal services do not route through proxy
+        current_no_proxy = os.getenv("NO_PROXY") or os.getenv("no_proxy") or "localhost,127.0.0.1"
+        if "flaresolverr" not in current_no_proxy:
+            current_no_proxy = f"{current_no_proxy},flaresolverr"
+        os.environ["NO_PROXY"] = current_no_proxy
+        os.environ["no_proxy"] = current_no_proxy
 
         if target_proxy != _CURRENT_PROXY:
             logger.info(f"[*] Upstream proxy configured: {obfuscate_proxy_url(target_proxy)}")
