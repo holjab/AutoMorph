@@ -8,7 +8,8 @@ services:
     environment:
       - TAILSCALE_FUNNEL_URL=${TAILSCALE_FUNNEL_URL:-}
       - BASE_URL=${BASE_URL:-}
-      - PROXY=${PROXY:-}
+      - PROXY_URL=${PROXY_URL:-${PROXY:-}}
+      - BYPASS_PROXY=${BYPASS_PROXY:-${NO_PROXY:-}}
       - FLARESOLVERR_URL=${FLARESOLVERR_URL:-}
     env_file:
       - .env

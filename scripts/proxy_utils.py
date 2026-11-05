@@ -1,6 +1,7 @@
 """
 Proxy configuration and utilities for upstream network connections.
-Supports HTTP and SOCKS5 proxies configured strictly via the PROXY Docker environment variable.
+Supports HTTP and SOCKS5 proxies configured strictly via the PROXY_URL Docker environment variable.
+Allows domain and host bypasses configured via BYPASS_PROXY.
 """
 
 from __future__ import annotations
@@ -65,11 +66,25 @@ def obfuscate_proxy_url(proxy: str | None) -> str:
 
 def get_proxy() -> str | None:
     """
-    Retrieves and normalizes the PROXY environment variable.
-    Returns None if PROXY is not set, empty, or whitespace.
+    Retrieves and normalizes the PROXY_URL (or legacy PROXY) environment variable.
+    Returns None if neither is set, empty, or whitespace.
     """
-    raw = os.getenv("PROXY")
+    raw = os.getenv("PROXY_URL") or os.getenv("PROXY")
     return normalize_proxy_url(raw)
+
+
+def get_bypass_proxy() -> str:
+    """
+    Retrieves and normalizes BYPASS_PROXY (or legacy NO_PROXY).
+    Guarantees localhost, 127.0.0.1, and flaresolverr are included.
+    """
+    raw = os.getenv("BYPASS_PROXY") or os.getenv("NO_PROXY") or os.getenv("no_proxy") or ""
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    defaults = ["localhost", "127.0.0.1", "flaresolverr"]
+    for d in defaults:
+        if d not in parts:
+            parts.append(d)
+    return ",".join(parts)
 
 
 def get_requests_proxies() -> dict[str, str] | None:
@@ -90,12 +105,12 @@ def get_requests_proxies() -> dict[str, str] | None:
 def setup_proxy(proxy_url: str | None = None) -> str | None:
     """
     Applies upstream proxy configuration to process environment variables.
-    If proxy_url is not passed, reads the PROXY environment variable.
+    If proxy_url is not passed, reads PROXY_URL (or PROXY).
     If proxy is configured, sets:
-      - PROXY, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY (and lowercase variants)
-      - NO_PROXY / no_proxy (defaults to localhost,127.0.0.1,flaresolverr if unset)
-    If proxy is not set or empty, removes any proxy variables that were set
-    so that direct connections are made.
+      - PROXY_URL, PROXY
+      - HTTP_PROXY, HTTPS_PROXY, ALL_PROXY (and lowercase variants)
+      - BYPASS_PROXY, NO_PROXY, no_proxy
+    If proxy is not set or empty, removes proxy variables so direct connections are made.
     """
     global _CURRENT_PROXY
 
@@ -114,25 +129,26 @@ def setup_proxy(proxy_url: str | None = None) -> str | None:
     )
 
     if target_proxy:
+        os.environ["PROXY_URL"] = target_proxy
         os.environ["PROXY"] = target_proxy
         for var in proxy_env_vars:
             os.environ[var] = target_proxy
 
-        # Ensure local loopback connections and internal services do not route through proxy
-        current_no_proxy = os.getenv("NO_PROXY") or os.getenv("no_proxy") or "localhost,127.0.0.1"
-        if "flaresolverr" not in current_no_proxy:
-            current_no_proxy = f"{current_no_proxy},flaresolverr"
-        os.environ["NO_PROXY"] = current_no_proxy
-        os.environ["no_proxy"] = current_no_proxy
+        # Apply bypass list to BYPASS_PROXY and standard NO_PROXY
+        bypass_list = get_bypass_proxy()
+        os.environ["BYPASS_PROXY"] = bypass_list
+        os.environ["NO_PROXY"] = bypass_list
+        os.environ["no_proxy"] = bypass_list
 
         if target_proxy != _CURRENT_PROXY:
-            logger.info(f"[*] Upstream proxy configured: {obfuscate_proxy_url(target_proxy)}")
+            logger.info(f"[*] Upstream proxy configured: {obfuscate_proxy_url(target_proxy)} (bypass: {bypass_list})")
             _CURRENT_PROXY = target_proxy
         return target_proxy
     else:
         # Clear all proxy env vars so direct connections are made
         for var in proxy_env_vars:
             os.environ.pop(var, None)
+        os.environ.pop("PROXY_URL", None)
         os.environ.pop("PROXY", None)
         if _CURRENT_PROXY is not None:
             logger.info("[*] Upstream proxy disabled; direct connections will be made.")
