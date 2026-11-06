@@ -23,7 +23,7 @@ RUN KEYSTORE=$(find /usr/lib/jvm -name cacerts | head -n 1) && \
     test -s /rootfs/opt/java/runtime/lib/security/cacerts && \
     /rootfs/opt/java/runtime/bin/java -version
 
-ARG MORPHE_VERSION=2.0.0
+ARG MORPHE_VERSION=2.1.0
 RUN wget -q -O /rootfs/automorph/tools/morphe-desktop-${MORPHE_VERSION}-all.jar \
     "https://github.com/MorpheApp/morphe-desktop/releases/download/v${MORPHE_VERSION}/morphe-desktop-${MORPHE_VERSION}-all.jar" && \
     ln -sf "/automorph/tools/morphe-desktop-${MORPHE_VERSION}-all.jar" /rootfs/automorph/tools/morphe.jar
