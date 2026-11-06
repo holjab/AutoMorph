@@ -526,8 +526,8 @@ class Morphe:
                 logger.info(f" └── [!] Alias found {alias}")
                 for repo, patch_info in details.items():
                     shas = self.get_sha(repo, package_name)
-                    patch_name = patch_info[0]
-                    patch_version_name = patch_info[2]
+                    patch_name = patch_info['patch_name']
+                    patch_version_name = patch_info['version_name_str']
 
                     for entry in entries:
                         if not isinstance(entry, dict):
@@ -620,26 +620,47 @@ class Morphe:
                     patch_name = patch_search.group(1).strip()
                     package_sections = re.split(r"Package name:\s*", block)[1:]
 
-                    # 1. Parse versions (take the first listed compatible version or default to (0, 0, 0))
-                    # 2. Package-specific patches
                     if package_sections:
                         for section in package_sections:
                             pkg = section.split()[0]
+
                             version_search = re.search(r"Compatible versions:\s*(.+)", section)
                             first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
                             version_digits = re.findall(r"\d+", first_ver_line)
                             tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
                             ver_str = first_ver_line.strip() if version_digits else "0.0.0"
+
+                            abi_version_codes = {}
+                            vcs = re.search(rf"^\s*{re.escape(ver_str)}:\s*(.+)$", section, re.MULTILINE)
+                            if not vcs:
+                                vcs = re.search(r"Version codes:\s*(.+)", section)
+    
+                            if vcs:
+                                version_codes = vcs.group(1).strip().splitlines()[0] if vcs else ""
+                                abi_codes = re.findall(r"([A-Z0-9_]+)=(\d+)", version_codes)
+                                normalised_abis = {'ARM64_V8A': 'arm64-v8a', 'ARMEABI_V7A': 'armeabi-v7a', 'X86_64': 'x86_64', 'X86': 'x86'}
+                                abi_version_codes = {normalised_abis.get(abi, abi.lower()): int(vc) for abi, vc in abi_codes}
+
                             if pkg in enabled_patches_per_app:
                                 for alias, details in enabled_patches_per_app[pkg].items():
                                     if repo in details and details[repo] == patch_name:
-                                        enabled_patches_per_app_versions.setdefault(pkg, {}).setdefault(alias, {})[repo] = (patch_name, tup_ver, ver_str)
-                    # 3. Genuine universal patches (check if any configured app wants this patch)
+                                        enabled_patches_per_app_versions.setdefault(pkg, {}).setdefault(alias, {})[repo] = {
+                                            'patch_name': patch_name,
+                                            'version_name_tuple': tup_ver,
+                                            'version_name_str': ver_str,
+                                            'abi_version_codes': abi_version_codes                                            
+                                        }
+
                     else:
                         for app_pkg, aliases in enabled_patches_per_app.items():
                             for alias, details in aliases.items():
                                 if repo in details and details[repo] == patch_name:
-                                    enabled_patches_per_app_versions.setdefault(app_pkg, {}).setdefault(alias, {})[repo] = (patch_name, (0, 0, 0), '0.0.0')
+                                    enabled_patches_per_app_versions.setdefault(app_pkg, {}).setdefault(alias, {})[repo] = {
+                                        'patch_name': patch_name,
+                                        'version_name_tuple': (0, 0, 0),
+                                        'version_name_str': '0.0.0',
+                                        'abi_version_codes': {} 
+                                    }
 
             else:
                 err_msg = result.stderr.strip().splitlines()[-1] if result.stderr else "Unknown error"
@@ -648,21 +669,29 @@ class Morphe:
         return enabled_patches_per_app_versions
      
     def find_package_req(self, enabled_patches_per_app_versions: dict[str, dict[str, dict[str, tuple[str, tuple[int, ...], str]]]]) -> dict[str, list[str]]:
-        package_req_tup = {}
+        output = {}
 
         for package_name, aliases  in enabled_patches_per_app_versions.items():
-            version = set()
+            package_req_tup = {}
             for aliase_details in aliases.values():
-                for repo_detials in aliase_details.values():
-                    tup_ver = repo_detials[1]
-                    str_ver = repo_detials[2]
-                    version.add((tup_ver, str_ver))
+                for repo_details in aliase_details.values():
+                    tup_ver = repo_details.get('version_name_tuple')
+                    str_ver = repo_details.get('version_name_str')
+                    abi_version_codes = repo_details.get('abi_version_codes')
 
-            sorted_versions = sorted(version, key=lambda item: item[0], reverse=True)
-
-            package_req_tup[package_name] = [ver_str for _, ver_str in sorted_versions]
-
-        return package_req_tup
+                    if str_ver not in package_req_tup:
+                        package_req_tup[str_ver] = {'tup_ver': tup_ver, 'abi_version_codes': dict(abi_version_codes) if abi_version_codes else {}}
+                    elif abi_version_codes:
+                        if not package_req_tup[str_ver].get('abi_version_codes'):
+                            package_req_tup[str_ver]['abi_version_codes'] = dict(abi_version_codes)
+                        else:
+                            for abi, code in abi_version_codes.items():
+                                package_req_tup[str_ver]['abi_version_codes'].setdefault(abi, code)
+   
+            sorted_versions = dict(sorted(package_req_tup.items(), key=lambda item: item[1]['tup_ver'], reverse=True))
+            output[package_name] = sorted_versions
+        
+        return output
 
 #################################
 #            PATCH              #
@@ -675,13 +704,13 @@ class Morphe:
             self.check_aliase_clash(package_name, target_version, enabled_patches_per_app_versions[package_name], options_to_use)
             logger.debug("run == 1")
         if run == 2:
-            target_tuple = tuple(int(x) for x in target_version.split("."))
+            version_digits = re.findall(r"\d+", target_version)
+            target_tuple = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
             repo_per_version = self.check_repo_per_version(enabled_patches_per_app_versions[package_name])
             logger.debug(f"Check options to use, repo per version: {repo_per_version}")
-            if latest:
-                repos = repo_per_version[(0, 0, 0)] 
-            else:
-                repos = repo_per_version[target_tuple]
+            
+            repos = repo_per_version.get((0, 0, 0), set()) if latest else repo_per_version.get(target_tuple, set())
+
             options_to_use = self.merge_target_repos(package_name, repos, target_version)
             self.check_aliase_clash(package_name, target_version, enabled_patches_per_app_versions[package_name], options_to_use)
             logger.debug("run == 2")
@@ -694,28 +723,29 @@ class Morphe:
 
         return repos, options_to_use
 
-    def check_repo_reqs(self, aliase_details: dict[str, dict[str, tuple[str, tuple[int, ...], str]]], target_version: str) -> set[str]:
+    def check_repo_reqs(self, aliase_details: dict[str, dict[str, dict]], target_version: str) -> set[str]:
         repos = set()
         for alias, repo_details in aliase_details.items():
-            for repo, (patch_name, version_tuple, version_string) in repo_details.items():
-                if version_string == target_version:
+            for repo, details in repo_details.items():
+                if details['version_name_str'] == target_version:
                     repos.add(repo)
                     break
-                else:
-                    best_candidate = max(repo_details.items(), key=lambda item: item[1][1])
+            else:
+                if repo_details:
+                    best_candidate = max(repo_details.items(), key=lambda item: item[1]['version_name_tuple'])
                     chosen_repo = best_candidate[0]
                     if chosen_repo:
                         repos.add(chosen_repo)
-                    else:
-                        logger.error(f" └── [!] No repo found for alias: {alias}")
+                else:
+                    logger.error(f" └── [!] No repo found for alias: {alias}")
         return repos
-
-    def check_repo_per_version(self, aliase_details: dict[str, dict[str, tuple[str, tuple[int, ...], str]]]) -> dict[tuple[int, ...], set[str]]:
+    
+    def check_repo_per_version(self, aliase_details: dict[str, dict[str, dict]]) -> dict[tuple[int, ...], set[str]]:
         output = {}
 
         for repo_details in aliase_details.values():
             for repo, val in repo_details.items():
-                output.setdefault(val[1], set()).add(repo)
+                output.setdefault(val.get('version_name_tuple', (0, 0, 0)), set()).add(repo)
 
         return output 
 

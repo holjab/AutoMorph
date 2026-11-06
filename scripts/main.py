@@ -192,17 +192,22 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
         patched_package_path = patched / package_name
         first_it = True
 
-        target_versions_set = set()
+        target_versions = {}
         for version in version_list:
-            version_tup = version, False
+            version_tup = version_list[version]['tup_ver'], False
+            target_vc = "No version codes supplied by patch"
 
-            logger.info(f"\n[*] {package_name} | v{version}")
+            if version_list[version].get('abi_version_codes'):
+                target_vc = version_list[version]['abi_version_codes'].get(arch, "No version code for target arch")
+
+            logger.info(f"\n[*] {package_name} | v{version} | vc: {target_vc}")
 
             if version is None or str(version).strip().lower() in ("0.0.0", "any", "latest", "any / latest"):
                 logger.info(f" ├── [!] No version requirement for {package_name}. Looking for most up-to-date version for download...")
                 version_dict = apkpure_fetcher.get_latest_version(package_name, arch, sources)
                 version = version_dict['version']
-                version_tup = version_dict['version'], True
+                version_digits = re.findall(r"\d+", version)
+                version_tup = (tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)), True
 
             if not version:
                 logger.warning(f" └── [!] Could not resolve version for {package_name}. Skipping...")
@@ -210,7 +215,7 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
 
             if force:
                 logger.info(" └── Forced via automorph console. Added to needs patching list..")
-                target_versions_set.add(version_tup)
+                target_versions[version_tup] = {'version_str': version, 'version_code': target_vc}
                 first_it = False
                 continue
 
@@ -218,7 +223,7 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
             
             if not patched_version_path.is_dir():
                 logger.info(" └── Version directory does not exist. Added to needs patching list.")
-                target_versions_set.add(version_tup)
+                target_versions[version_tup] = {'version_str': version, 'version_code': target_vc}
                 first_it = False
                 continue
         
@@ -230,7 +235,7 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
                 
                 if first_it:
                     logger.info(f" └── [✓] {filename} latest version {version} already patched. Skipping package...")
-                    target_versions_set.clear()
+                    target_versions = {}
                     break
 
                 logger.info(f" └── [✓] {filename} already exists - not proceeding with patch.")
@@ -238,26 +243,26 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
                 continue
 
             logger.info(f" └── {filename} does not exist. Added to needs patching list.")
-            target_versions_set.add(version_tup)
+            target_versions[version_tup] = {'version_str': version, 'version_code': target_vc}
 
-        if target_versions_set:
-            needs_patching[package_name] = {'target_versions': sorted(target_versions_set, key=lambda v: v[0], reverse=True), 'patch_attempt': 0}
-
+        if target_versions:
+            sorted_target_versions = dict(sorted(target_versions.items(), key=lambda item: item[0], reverse=True))
+            needs_patching[package_name] = {'target_versions': sorted_target_versions, 'patch_attempt': 0}
 
     logger.info("\n[*] SUMMARY: Packages in download list:")
     if needs_patching:
         for pkg, needs_patching_details in needs_patching.items():
-            for i, (version, _) in enumerate(needs_patching_details['target_versions']):
+            for i, ver_details in enumerate(needs_patching_details['target_versions'].values()):
                 if i == 0:
-                    logger.info(f" └── '{pkg}' 'v{version}'")
+                    logger.info(f" └── {pkg} | v{ver_details['version_str']} | vc: {ver_details['version_code']}")
                 else:
-                    logger.info(f"       └── 'Backup no. {i}:' 'v{version}'")
+                    logger.info(f"       └── Backup no. {i}: v{ver_details['version_str']} | vc: {ver_details['version_code']}")
     else:
         logger.info(" └── [✓] None! All packages are up to date.")
 
     return needs_patching
 
-def patch_piepline(package_name, details, downloader, morphe, enabled_patches, patched_dir, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
+def patch_piepline(package_name: str, details: dict, downloader: Downloader, morphe: Morphe, enabled_patches: dict, patched_dir: Path, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
     targets = details['target_versions']
     patch_attempt = details.get('patch_attempt', 0)
     attempt_details = []
@@ -266,13 +271,17 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
     while patch_attempt < (len(targets) * 2):
         if patch_attempt < len(targets):
             run = 1
-            target_tuple = targets[patch_attempt]
-            target_version = target_tuple[0]
+            target, target_details = list(targets.items())[patch_attempt]
+            latest = target[1]
+            target_version = target_details['version_str']
+            target_vc = target_details['version_code']
             patched_package = patched_dir / package_name / target_version / f"{package_name}_{target_version}_patched.apk"
         else:
             run = 2
-            target_tuple = targets[(patch_attempt - len(targets))]
-            target_version = target_tuple[0]
+            target, target_details = list(targets.items())[(patch_attempt - len(targets))]
+            latest = target[1]
+            target_version = target_details['version_str']
+            target_vc = target_details['version_code']
             patched_package = patched_dir / package_name / target_version / f"{package_name}_{target_version}_patched.apk"
 
             if len(failed_downloads) == len(targets):
@@ -285,7 +294,7 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
             logger.info(f" └── [✓] {package_name} v{target_version} is already patched.")
             return True, attempt_details, {'repos': None, "strat": run, 'output_dest': patched_package, 'attempt': None}
 
-        patch_list, dl_reason, package = downloader.download_package_main(package_name, target_version)
+        patch_list, dl_reason, package = downloader.download_package_main(package_name, target_version, target_vc)
 
         if not patch_list:
             logger.warning(f" └── [!] Base APK download/verification failed for v{target_version}.")
@@ -295,7 +304,7 @@ def patch_piepline(package_name, details, downloader, morphe, enabled_patches, p
             continue
 
         try:
-            repos, options_to_use = morphe.check_options_to_use(package_name, target_version, target_tuple[1], enabled_patches, run)
+            repos, options_to_use = morphe.check_options_to_use(package_name, target_version, latest, enabled_patches, run)
 
         except ValueError as e:
             logger.error(f" └── [!] Options resolution failed ({e}). Trying backup version...")

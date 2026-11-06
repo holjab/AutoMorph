@@ -23,14 +23,14 @@ class Downloader:
 #        DOWNLOAD LOGIC         #
 #################################
 
-    def download_package_main(self, package_name: str, target_version: str) -> tuple[dict | None, str | None]: 
-        logger.info(f"\n[*] {package_name} | v{target_version} ({self.architecture})")
+    def download_package_main(self, package_name: str, target_version: str, target_vc: int | str) -> tuple[dict | None, str | None]: 
+        logger.info(f"\n[*] {package_name} | v{target_version} | vc: {target_vc} | {self.architecture}")
 
         package = {}
         outer_dir = self.make_dir(package_name, target_version)
         split_dir = outer_dir / f"{package_name}"
 
-        exists, version_code = self.check_exists(outer_dir, self.architecture, target_version, package_name, split_dir)
+        exists, version_code = self.check_exists(outer_dir, self.architecture, target_version, target_vc, package_name, split_dir)
 
         if exists:
             patch_details = {"package_name": package_name, "version_name": target_version, "arch": self.architecture, 'patch_attempt': 0}
@@ -38,9 +38,32 @@ class Downloader:
             package = {package_name: {target_version: {'version_code': version_code, 'arch': self.architecture}}}
             return patch_details, f"{package_name} already exists", package
 
+        is_valid_vc = isinstance(target_vc, int) or (isinstance(target_vc, str) and target_vc.isdigit())
+        if is_valid_vc:
+            success, reason = self.try_source("gplay", package_name, None, outer_dir, target_version, self.architecture, split_dir, [str(target_vc)])
+            if success:
+                logger.info(" └── [✓] Ready to patch.")
+                patch_details = {"package_name": package_name, "version_name": target_version, "arch": self.architecture, 'patch_attempt': 0}
+                package = {
+                    package_name: {
+                        target_version: {
+                            'version_code': int(target_vc),
+                            'arch': self.architecture
+                        }
+                    }
+                }
+                return patch_details, reason, package
+            else:
+                logger.warning(f" └── [!] Could not download {package_name}, v{target_version}, vc: {target_vc} from google. Reason {reason}")
+                logger.info(" └── Will attempt to fetch correct package")
+
         result = apkpure_fetcher.process_package(package_name, target_version, self.architecture, self.sources_file)
         package = self.package_details(result)
-        patch_list, reason = self.download_package(result, outer_dir, split_dir)
+        patch_list, reason = self.download_package(result, outer_dir, split_dir, int(target_vc) if is_valid_vc else None)
+        if patch_list and is_valid_vc:
+            v_name = result.get('versionname', target_version)
+            if package_name in package and v_name in package[package_name]:
+                package[package_name][v_name]['version_code'] = int(target_vc)
         return patch_list, reason, package
 
     def package_details(self, result: dict):
@@ -55,10 +78,14 @@ class Downloader:
 
         return package
 
-    def download_package(self, result: dict, outer_dir: Path, split_dir: Path) -> tuple[dict | None, str | None]: 
+    def download_package(self, result: dict, outer_dir: Path, split_dir: Path, target_vc: int | None = None) -> tuple[dict | None, str | None]: 
         success, reason = False, None
         package_name, version_name, version_code, arch, sources, apkmirror_versioncode, apkmirror_url = result['package_name'], result['versionname'], result['versioncode'], result['arch'], result['sources'], result['apkmirror_versioncode'], result['apkmirror_url']
-        version_codes = [v for v in [version_code, apkmirror_versioncode] if v is not None]
+        target_list = [target_vc] if target_vc is not None else []
+        version_codes = target_list + [
+            v for v in [version_code, apkmirror_versioncode]
+            if v is not None and (target_vc is None or str(v) != str(target_vc))
+        ]
 
         for source, link in sources.items():
             if source != "gplay" and not link:
@@ -95,7 +122,7 @@ class Downloader:
         result, reason = False, "verification_failed"
 
         if matched_xapk:
-            result, reason = self.check_xapk(matched_xapk, arch, version_name, package_name)
+            result, reason = self.check_xapk(matched_xapk, arch, version_name, package_name, version_codes[0] if version_codes else None)
             
             if reason == "is_apk":
                 new_apk = matched_xapk.with_suffix(".apk")
@@ -104,7 +131,7 @@ class Downloader:
 
         matched_apk = next(outer_dir.glob("*.apk"), None)
         if not result and matched_apk:
-            result, reason = self.check_apk(matched_apk, arch, version_name, package_name)
+            result, reason = self.check_apk(matched_apk, arch, version_name, version_codes[0] if version_codes else None)
 
         if not matched_apk and not matched_xapk:
             return False, "no_file_found"
@@ -343,7 +370,7 @@ class Downloader:
 #            CHECKS             #
 #################################
 
-    def check_exists(self, outer_dir: Path, arch: str, version_name: str, package_name: str, split_dir: Path) -> tuple[bool, str]:
+    def check_exists(self, outer_dir: Path, arch: str, version_name: str, version_code: int | str, package_name: str, split_dir: Path) -> tuple[bool, str]:
         xapks = list(outer_dir.glob("*.xapk"))
 
         if split_dir.exists() and not xapks:
@@ -352,7 +379,7 @@ class Downloader:
 
         if xapks:
             for xapk in xapks:
-                xapk_result, xapk_reason = self.check_xapk(xapk, arch, version_name, package_name)
+                xapk_result, xapk_reason = self.check_xapk(xapk, arch, version_name, package_name, version_code)
                 if xapk_reason == "is_apk":
                     new_apk = xapk.with_suffix(".apk")
                     xapk.replace(new_apk)
@@ -365,14 +392,14 @@ class Downloader:
 
         if apks:
             for apk in apks:
-                apk_result, apk_reason = self.check_apk(apk, arch, version_name, package_name)
+                apk_result, apk_reason = self.check_apk(apk, arch, version_name, version_code)
                 if apk_result:
                     return True, apk_reason
                 logger.warning(f" └── [!] APK check failed: {apk_reason}")
         
         return False, None
         
-    def check_xapk(self, xapk: Path, arch: str, version_name: str, package_name: str) -> tuple[bool, str]:
+    def check_xapk(self, xapk: Path, arch: str, version_name: str, package_name: str, version_code: int | str) -> tuple[bool, str]:
         is_apk, reason = self.is_apk(xapk)
 
         if is_apk:
@@ -382,9 +409,14 @@ class Downloader:
         
         if arch_result:
             version_result, reason = self.check_xapk_version(xapk, version_name, package_name)
-            if version_result:
+            is_valid_vc = isinstance(version_code, int) or (isinstance(version_code, str) and str(version_code).isdigit())
+            if version_result and is_valid_vc:
+                if int(reason) != int(version_code):
+                    logger.info(f" ├── [!] Base XAPK version code does not match target: ({version_code})")
+                    return False, "Version code does not match target version code"
                 return True, reason
-
+            elif version_result:
+                return True, reason
         return False, reason 
 
     def is_apk(self, xapk: Path) -> tuple[bool, str]:
@@ -431,7 +463,7 @@ class Downloader:
         except (BadZipFile, OSError):
                 return False, "no_xapk"
 
-    def check_xapk_version(self, xapk: Path, version_name: str, package_name: str) -> tuple[bool, str | None]:
+    def check_xapk_version(self, xapk: Path, version_name: str, package_name: str) -> tuple[bool, str | None, int | None]:
         try:
             with ZipFile(xapk, "r") as outer_xapk:
                 inner_files = outer_xapk.namelist()
@@ -457,7 +489,7 @@ class Downloader:
                         if detected_version == version_name or normalised_detected_version == version_name:
                             logger.info(f" ├── Base APK matches target version ({version_name})")
                             version_code = APK(apk_bytes, raw=True).version_code
-                            return True, version_code
+                            return True, int(version_code)
                     except Exception:
                         continue
 
@@ -471,10 +503,16 @@ class Downloader:
         except (BadZipFile, OSError):
             return False, "no_xapk"
 
-    def check_apk(self, apk: Path, arch: str, version_name: str, package_name: str) -> tuple[bool, str | None]:
+    def check_apk(self, apk: Path, arch: str, version_name: str, version_code: int | str) -> tuple[bool, str | None]:
         arch_result, reason = self.apk_arch(apk, arch)
         if arch_result:
             version_result, reason = self.apk_version(apk, version_name)
+            is_valid_vc = isinstance(version_code, int) or (isinstance(version_code, str) and str(version_code).isdigit())
+            if version_result and is_valid_vc:
+                if int(reason) != int(version_code):
+                    logger.info(f" ├── [!] Base APK version code does not match target: ({version_code})")
+                    return False, "Version code does not match target version code"
+                return True, reason
             if version_result:
                 return True, reason
         return False, reason
@@ -504,7 +542,7 @@ class Downloader:
         if detected_version == target_version or normalise_detected_version == target_version:
             logger.info(f" ├── [✓] Base APK matches target version ({target_version})")
             version_code = APK(package).version_code
-            return True, version_code
+            return True, int(version_code)
         if detected_version is None or normalise_detected_version is None:
             logger.error(f" ├── [✗] Failed to parse manifest for {package.name}")
             return False, "unparseable_version"
