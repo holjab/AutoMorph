@@ -66,10 +66,10 @@ class Downloader:
                 package[package_name][v_name]['version_code'] = int(target_vc)
         return patch_list, reason, package
 
-    def package_details(self, result: dict):
+    def package_details(self, result: dict, target_version: str):
         package = {
             result['package_name']: {
-                result['versionname']: {
+                target_version: {
                     'version_code': result['versioncode'],
                     'arch': result['arch']
                 }
