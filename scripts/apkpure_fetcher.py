@@ -68,6 +68,25 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    import proxy_utils
+except ImportError:
+    try:
+        from . import proxy_utils
+    except ImportError:
+        proxy_utils = None
+
+if proxy_utils:
+    proxy_utils.setup_proxy()
+
+try:
+    import flaresolverr
+except ImportError:
+    try:
+        from . import flaresolverr
+    except ImportError:
+        flaresolverr = None
+
 APKPURE_API = "https://api.pureapk.com/m/v3/cms/app_version"
 APKCOMBO_BASE = "https://apkcombo.com"
 
@@ -260,16 +279,75 @@ def is_version_compatible(candidate_ver: str, op: str, target_tuple: tuple[int, 
 
 def fetch_html(url: str, source: str | None = None) -> str:
     headers = APK_MIRROR_HEADERS if source == "apkmirror" else HEADERS_BROWSER
+
+    # 1. Proactive FlareSolverr for APKMirror:
+    # APKMirror blocks standard automated scrapers with Cloudflare 403.
+    # If FLARESOLVERR_URL is set, immediately bypass via FlareSolverr.
+    if flaresolverr and flaresolverr.is_flaresolverr_enabled() and (source == "apkmirror" or "apkmirror.com" in url):
+        html = flaresolverr.fetch_via_flaresolverr(url)
+        if html:
+            return html
+        log("FlareSolverr", f"Challenge resolution returned empty for {url}; attempting standard request fallback...")
+
+    # 2. Try standard fetch (respects PROXY environment variable if set)
+    last_err: Exception | None = None
     try:
         resp = requests.get(url, headers=headers, timeout=25)
         if resp.ok and len(resp.text) > 200:
-            return resp.text
-    except Exception:
-        pass
+            if "not allowed by policy" not in resp.text and "Just a moment..." not in resp.text:
+                return resp.text
+            else:
+                last_err = RuntimeError(f"Cloudflare challenge or policy block on {url}")
+        else:
+            if resp.status_code == 403:
+                last_err = requests.HTTPError(f"403 Client Error: Forbidden for url: {url}", response=resp)
+    except Exception as e:
+        last_err = e
 
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as response:
-        return response.read().decode("utf-8", errors="replace")
+    # 3. Reactive FlareSolverr fallback for any source (e.g. APKMirror, APKCombo) blocked by Cloudflare
+    if flaresolverr and flaresolverr.is_flaresolverr_enabled():
+        html = flaresolverr.fetch_via_flaresolverr(url)
+        if html:
+            return html
+
+    # 4. APKCombo-specific resilience (mirror domain fallback and proxy error recovery)
+    if "apkcombo." in url:
+        alt_url = None
+        if "apkcombo.com" in url:
+            alt_url = url.replace("apkcombo.com", "apkcombo.app")
+        elif "apkcombo.app" in url:
+            alt_url = url.replace("apkcombo.app", "apkcombo.com")
+
+        if alt_url:
+            try:
+                resp = requests.get(alt_url, headers=HEADERS_BROWSER, timeout=20)
+                if resp.ok and len(resp.text) > 200 and "not allowed by policy" not in resp.text:
+                    return resp.text
+            except Exception:
+                pass
+
+        # If proxy failed to connect to apkcombo (e.g. 503 Service Unavailable), attempt direct connection
+        if isinstance(last_err, requests.exceptions.ProxyError):
+            log("APKCombo", f"Proxy connection failed ({last_err}); attempting direct connection fallback for {url}...")
+            try:
+                with requests.Session() as direct_sess:
+                    direct_sess.trust_env = False
+                    resp = direct_sess.get(url, headers=HEADERS_BROWSER, timeout=20)
+                    if resp.ok and len(resp.text) > 200 and "not allowed by policy" not in resp.text:
+                        return resp.text
+            except Exception as direct_err:
+                log("APKCombo", f"Direct fallback also failed: {direct_err}")
+
+    # 5. Provide clear actionable log when APKMirror is blocked without FlareSolverr
+    if (source == "apkmirror" or "apkmirror.com" in url) and not (flaresolverr and flaresolverr.is_flaresolverr_enabled()):
+        log("APKMirror", "Blocked by Cloudflare (403 Forbidden). Configure FLARESOLVERR_URL in compose/.env to bypass.")
+
+    if last_err is not None:
+        raise last_err
+
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    return resp.text
 
 def log(source: str, message: str) -> None:
     """One log format for every source: '  [Source] message'."""
@@ -511,13 +589,12 @@ def resolve_apkcombo_slug_direct(package_name: str) -> str | None:
     for base in ("https://apkcombo.com", "https://apkcombo.app"):
         url = f"{base}/search/{urllib.parse.quote(package_name)}"
         try:
-            req = urllib.request.Request(url, headers=HEADERS_BROWSER)
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                final_url = resp.geturl()
-                m = re.search(r"apkcombo\.(?:app|com)/([^/]+)/" + re.escape(package_name) + r"(?:/|$)", final_url)
-                if m and m.group(1) != "search":
-                    return m.group(1)
-                html = resp.read().decode("utf-8", errors="replace")
+            resp = requests.get(url, headers=HEADERS_BROWSER, timeout=8, allow_redirects=True)
+            final_url = resp.url
+            m = re.search(r"apkcombo\.(?:app|com)/([^/]+)/" + re.escape(package_name) + r"(?:/|$)", final_url)
+            if m and m.group(1) != "search":
+                return m.group(1)
+            html = resp.text
                 
             m = re.search(r'href="[^"]*apkcombo\.(?:app|com)/([^/]+)/' + re.escape(package_name) + r'/?["/]', html)
             if not m:
@@ -548,9 +625,8 @@ def get_apkcombo_slug(package_name: str) -> str:
     url = f"https://html.duckduckgo.com/html/?q={query}"
 
     try:
-        req = urllib.request.Request(url, headers=HEADERS_BROWSER)
-        with urllib.request.urlopen(req, timeout=10) as response:
-            html = response.read().decode("utf-8", errors="ignore")
+        resp = requests.get(url, headers=HEADERS_BROWSER, timeout=10)
+        html = resp.text
 
         soup = BeautifulSoup(html, "html.parser")
         for a in soup.find_all("a", class_="result__url"):
@@ -1287,7 +1363,7 @@ def query_uptodown(
         base_app_url = re.sub(r"https?://([^/]+)\.en\.uptodown\.com", r"https://\1.uptodown.com", app_url)
         base_app_url = re.sub(r"https?://en\.uptodown\.com", r"https://www.uptodown.com", base_app_url).rstrip("/")
 
-        session = requests.Session()
+        session = proxy_utils.get_session() if proxy_utils else requests.Session()
 
         # Try candidate URLs (English /download first, then regional fallbacks)
         dl_candidates = [
@@ -1434,7 +1510,7 @@ def query_aptoide(
     clean_target = clean_ver or (normalise_version(target_version) if target_version else None)
     is_specific = op not in ("latest", "any") and bool(clean_target)
 
-    session = requests.Session()
+    session = proxy_utils.get_session() if proxy_utils else requests.Session()
     session.headers.update(APTOIDE_HEADERS)
 
     for base_url in APTOIDE_BASE_URLS:

@@ -14,6 +14,12 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+try:
+    import proxy_utils
+    proxy_utils.setup_proxy()
+except Exception as e:
+    logging.warning(f"Could not configure upstream proxy in scheduler: {e}")
+
 def _load_config_values() -> tuple[str, bool]:
     project_root = Path(__file__).resolve().parent.parent
     config_path = project_root / "tools" / "automorph-data" / "config.yaml"

@@ -135,6 +135,12 @@ def check_env(project_root: Path):
     except Exception as e:
         logger.error(f"Failed to load environment file: {e}")
 
+    try:
+        import proxy_utils
+        proxy_utils.setup_proxy()
+    except Exception as e:
+        logger.warning(f"Could not configure upstream proxy: {e}")
+
     if not os.getenv("SMTP_USERNAME") or not os.getenv("SMTP_PASSWORD"):
         logger.warning(f"[*] No SMTP_USERNAME, or SMTP_PASSWORD specified in enviroment. Unable to send email.")
 

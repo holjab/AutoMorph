@@ -60,6 +60,15 @@ PROJECT_ROOT = Path(os.getenv("AUTOMORPH_ROOT", Path(__file__).resolve().parent.
 if (PROJECT_ROOT / ".env").is_file():
     load_dotenv(PROJECT_ROOT / ".env")
 
+scripts_dir = str(PROJECT_ROOT / "scripts")
+if scripts_dir not in sys.path:
+    sys.path.insert(0, scripts_dir)
+try:
+    import proxy_utils
+    proxy_utils.setup_proxy()
+except Exception as e:
+    logging.warning(f"Could not initialize proxy on startup: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Helper Models & Calculations

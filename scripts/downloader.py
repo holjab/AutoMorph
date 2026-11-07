@@ -13,6 +13,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    import proxy_utils
+except ImportError:
+    try:
+        from . import proxy_utils
+    except ImportError:
+        proxy_utils = None
+
+if proxy_utils:
+    proxy_utils.setup_proxy()
+
 class Downloader:
     def __init__(self, org_path: Path, architecture: str, project_root: Path) -> None:
         self.org_path = org_path
