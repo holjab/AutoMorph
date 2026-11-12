@@ -58,12 +58,11 @@ class Downloader:
                 logger.info(" └── Will attempt to fetch correct package")
 
         result = apkpure_fetcher.process_package(package_name, target_version, self.architecture, self.sources_file)
-        package = self.package_details(result)
+        package = self.package_details(result, target_version)
         patch_list, reason = self.download_package(result, outer_dir, split_dir, int(target_vc) if is_valid_vc else None)
         if patch_list and is_valid_vc:
-            v_name = result.get('versionname', target_version)
-            if package_name in package and v_name in package[package_name]:
-                package[package_name][v_name]['version_code'] = int(target_vc)
+            if package_name in package and target_version in package[package_name]:
+                package[package_name][target_version]['version_code'] = int(target_vc)
         return patch_list, reason, package
 
     def package_details(self, result: dict, target_version: str):

@@ -31,6 +31,12 @@ def main(project_root: Path, conf: dict) -> None:
         init_completed = True
         force = False
 
+        state_dir = project_root / "tools" / "automorph-data" / "state"
+        patched_json = state_dir / "patched.json"
+
+        if not patched_json.is_file():
+            manager.remake_patched(project_root, base_url, architecture, patched_json, patched_dir)
+
         target_pkg = os.getenv("TARGET_PACKAGE") or (sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None)
         if target_pkg:
             force = True
@@ -82,8 +88,6 @@ def main(project_root: Path, conf: dict) -> None:
     finally:
         if init_completed and not interrupted:
             duration_seconds = time.perf_counter() - start_time
-            state_dir = project_root / "tools" / "automorph-data" / "state"
-            patched_json = state_dir / "patched.json"
 
             if patch_executed:
                 manager.main(patched, morphe.repo_details, morphe.detailed_patch_list, base_url, morphe.morphe_location, state_dir, architecture, morphe.enabled_patches_per_app)
@@ -184,7 +188,7 @@ def parse_yaml(conf: dict) -> tuple:
 
     return architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
 
-def check_patched_version(package_req: list, patched: Path, arch: str, sources: Path, force: bool):
+def check_patched_version(package_req: dict | list, patched: Path, arch: str, sources: Path, force: bool):
     logger.debug(f"\npackage_req:\n{package_req}\n")
     needs_patching = {}
 
@@ -194,11 +198,18 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
 
         target_versions = {}
         for version in version_list:
-            version_tup = version_list[version]['tup_ver'], False
-            target_vc = "No version codes supplied by patch"
+            if isinstance(version_list, dict):
+                version_info = version_list[version]
+                version_tup = version_info.get('tup_ver', (0, 0, 0)), False
+                target_vc = "No version codes supplied by patch"
 
-            if version_list[version].get('abi_version_codes'):
-                target_vc = version_list[version]['abi_version_codes'].get(arch, "No version code for target arch")
+                if version_info.get('abi_version_codes'):
+                    target_vc = version_info['abi_version_codes'].get(arch, "No version code for target arch")
+            else:
+                # Fallback for legacy list format: version_list is [ver_str, ...]
+                version_digits = re.findall(r"\d+", str(version))
+                version_tup = (tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)), False
+                target_vc = "No version codes supplied by patch"
 
             logger.info(f"\n[*] {package_name} | v{version} | vc: {target_vc}")
 

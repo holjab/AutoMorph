@@ -422,9 +422,90 @@ def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, 
     catalogue = read_json(morphe_catalogue)
 
     for package_name, details in patched.items():
-        p.make_patched_data(package_name, details, catalogue)
+        try:
+            p.make_patched_data(package_name, details, catalogue)
+        except Exception as e:
+            logger.error(
+                f"[!] Failed to generate metadata for {package_name} v{details.get('version_name')}: {e}", 
+                exc_info=True
+            )
 
     write_json(p.patched_data, patched_json)
+
+def remake_patched(project_root: Path, base_url: str, architecture: str, patched_json: Path, patched_dir: Path):
+
+    morphe_log = project_root / "tools" / "morphe-data" / "patched-apps.json"
+
+    if not patched_dir.is_dir():
+        return False
+
+    patched_data = read_json(patched_json) or {}
+    recovered = 0
+
+    if morphe_log.is_file():
+        data = read_json(morphe_log) or {}
+        for rec in data.get("records", []):
+            apk_path = Path(rec.get("outputApkPath", ""))
+            if not apk_path.is_file():
+                continue
+            pkg = rec.get("packageName")
+            ver = rec.get("apkVersion")
+            if not pkg or not ver:
+                continue
+
+            if pkg in patched_data and ver in patched_data[pkg]:
+                continue
+
+            size_bytes = rec.get("outputApkSize") or apk_path.stat().st_size
+            size_mb = size_bytes / (1024 * 1024)
+            size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes / 1024:.2f} KB"
+            
+            # Using standard time module:
+            time_ms = rec.get("patchedAt") or int(apk_path.stat().st_mtime * 1000)
+            time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time_ms / 1000))
+            
+            rel_path = apk_path.as_posix().split("/patched/", 1)[-1]
+
+            patched_data.setdefault(pkg, {})[ver] = {
+                "metadata": {"time": time_str, "time_ms": time_ms},
+                "package": {
+                    "clean_name": rec.get("displayName", pkg),
+                    "source_package_name": pkg,
+                    "patched_package_name": rec.get("currentPackageName", pkg),
+                    "patched_version_name": str(ver),
+                    "source_version_name": str(ver),
+                    "patched_version_code": int(rec.get("apkVersionCode") or 0),
+                    "source_version_code": int(rec.get("apkVersionCode") or 0),
+                    "arch": architecture,
+                    "min_sdk": None,
+                    "target_sdk": None,
+                },
+                "file": {
+                    "file_name": apk_path.name,
+                    "location": str(apk_path),
+                    "url": f"{base_url}/files/{rel_path}",
+                    "size_bytes": size_bytes,
+                    "file_size": size_str,
+                    "sha256": rec.get("outputApkSha256", ""),
+                },
+                "patch": {
+                    "applied_patches": {},
+                    "patch_aliases": {},
+                    "repos": [],
+                    "strat": 1,
+                    "attempt": 1,
+                    "morphe_desktop_version": rec.get("patchedWithMorpheVersion", "Unknown"),
+                },
+            }
+            recovered += 1
+
+    if recovered > 0 or (patched_data and not patched_json.is_file()):
+        write_json(patched_data, patched_json)
+        logger.info(f" └── [✓] State self-healed: Indexed {recovered} patched APKs into patched.json")
+        return True
+
+    return False
+
 
 def clean(max_original_packages: int, max_patched_packages:int, state_dir: Path, original_dir: Path, patched_dir: Path, patched_json: Path) -> None:
     if migrate_patched_json and patched_json.is_file():
