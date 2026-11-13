@@ -266,6 +266,13 @@ def save_owner_options(package: str, owner: str, patches: dict[str, Any], meta: 
 
 def get_morphe_jar_path() -> Path | None:
     """Finds morphe.jar or morphe-desktop jar under tools/."""
+    try:
+        import morphe_cli
+        jar = morphe_cli.get_morphe_jar_path(PROJECT_ROOT)
+        if jar and jar.is_file():
+            return jar
+    except Exception:
+        pass
     tools_dir = PROJECT_ROOT / "tools"
     primary = tools_dir / "morphe.jar"
     if primary.exists():
@@ -444,6 +451,16 @@ def download_repo_mpp(owner: str, repo_name: str, log_fn: Any = None) -> Path | 
 def generate_options_via_cli(mpp_path: Path, package: str, target_file: Path, log_fn: Any = None) -> bool:
     """Executes morphe options-create directly on target_file using local .mpp and morphe.jar."""
     jar_path = get_morphe_jar_path()
+    if not jar_path:
+        try:
+            import morphe_cli
+            if log_fn:
+                log_fn("[Morphe CLI] CLI jar not found. Attempting to download latest release...")
+            morphe_cli.update_morphe_cli(PROJECT_ROOT)
+            jar_path = get_morphe_jar_path()
+        except Exception as e:
+            logger.warning(f"Could not auto-download Morphe CLI: {e}")
+
     if not jar_path:
         msg = "morphe.jar not found under tools/, cannot run options-create CLI."
         logger.warning(msg)

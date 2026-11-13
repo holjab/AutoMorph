@@ -13,6 +13,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    import proxy_utils
+except ImportError:
+    try:
+        from . import proxy_utils
+    except ImportError:
+        proxy_utils = None
+
+if proxy_utils:
+    proxy_utils.setup_proxy()
+
 class Downloader:
     def __init__(self, org_path: Path, architecture: str, project_root: Path) -> None:
         self.org_path = org_path
@@ -23,7 +34,11 @@ class Downloader:
 #        DOWNLOAD LOGIC         #
 #################################
 
-    def download_package_main(self, package_name: str, target_version: str) -> tuple[dict | None, str | None]: 
+    def download_package_main(self, package_name: str, target_version: str) -> tuple[dict | None, str | None, dict]: 
+        if not target_version or str(target_version).strip().lower() in ("0.0.0", "none", "any", "latest", "any / latest"):
+            logger.error(f"\n[!] Invalid target version '{target_version}' for {package_name}. Never fallback to 0.0.0; aborting download.")
+            return None, f"Invalid target version '{target_version}'", {}
+
         logger.info(f"\n[*] {package_name} | v{target_version} ({self.architecture})")
 
         package = {}

@@ -119,6 +119,14 @@ class Patched:
 
         morphe = re.search(r"(\d+\.\d+\.\d+)", self.morphe_location.resolve().name) 
         morphe_version = morphe.group(1) if morphe else "Unknown"
+        if morphe_version == "Unknown":
+            try:
+                import morphe_cli
+                cli_ver = morphe_cli.get_installed_cli_version()
+                if cli_ver:
+                    morphe_version = cli_ver.lstrip("v")
+            except Exception:
+                pass
 
         self.patched_data.setdefault(package_name, {})[patched_version_name] = {
             'metadata': details['time'],

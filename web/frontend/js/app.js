@@ -508,6 +508,7 @@ function setupEventListeners() {
   document.getElementById('btn-patch-fetch-clear-log')?.addEventListener('click', clearPatchFetchLogs);
   // Settings Tab Actions
   document.getElementById('btn-reload-settings')?.addEventListener('click', () => loadSettings(true));
+  document.getElementById('btn-update-cli')?.addEventListener('click', handleUpdateMorpheCli);
   document.getElementById('btn-save-system-settings')?.addEventListener('click', saveSystemSettings);
   document.getElementById('btn-email-test-quick')?.addEventListener('click', sendQuickTestEmail);
   document.getElementById('setting-endpoint-select')?.addEventListener('change', (e) => {
@@ -1899,6 +1900,44 @@ async function loadSettings(showFeedback = false) {
   }
 }
 
+async function handleUpdateMorpheCli() {
+  const btn = document.getElementById('btn-update-cli');
+  const inpCli = document.getElementById('setting-cli-version');
+  const origText = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-rounded" style="animation: spin 0.8s linear infinite; font-size: 16px;">sync</span> <span>Checking...</span>';
+  }
+  if (inpCli) {
+    inpCli.value = 'Checking GitHub...';
+  }
+  try {
+    const res = await fetch('/api/settings/cli/update', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'updated' || data.updated) {
+      showToast(`Morphe CLI successfully updated to ${data.tag || data.version}!`, 'success');
+    } else if (data.status === 'up_to_date') {
+      showToast(`Morphe CLI is already up to date (${data.version || 'latest'})`, 'info');
+    } else if (data.error) {
+      showToast(`Morphe CLI update check: ${data.error}`, 'warning');
+    } else {
+      showToast(data.message || 'Check complete', 'info');
+    }
+    await loadSettings();
+  } catch (err) {
+    console.error('Error updating Morphe CLI:', err);
+    showToast('Failed to check Morphe CLI update: ' + err.message, 'error');
+    if (inpCli && state.settings?.system?.cli_version) {
+      inpCli.value = state.settings.system.cli_version;
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origText || '<span class="material-symbols-rounded" style="font-size: 16px;">sync</span> <span>Check Update</span>';
+    }
+  }
+}
+
 function renderSettings(settings) {
   if (!settings) return;
 
@@ -1909,6 +1948,30 @@ function renderSettings(settings) {
   // 1. System & Build Configuration
   const selArch = document.getElementById('setting-arch');
   if (selArch && sys.architecture) selArch.value = sys.architecture;
+
+  const inpCli = document.getElementById('setting-cli-version');
+  const cliBadge = document.getElementById('cli-update-badge');
+  const cliSubtext = document.getElementById('setting-cli-subtext');
+  if (inpCli) {
+    const rawCli = sys.cli_version || sys.morphe_cli_version || 'Not Installed';
+    inpCli.value = (rawCli.startsWith('v') || rawCli === 'Not Installed' || rawCli === 'Checking...' || rawCli === 'Loading...')
+      ? rawCli
+      : `v${rawCli}`;
+    if (sys.cli_update_available) {
+      if (cliBadge) {
+        cliBadge.style.display = 'inline-block';
+        cliBadge.textContent = `New: ${sys.cli_latest_version || 'Available'}`;
+      }
+      if (cliSubtext) {
+        cliSubtext.textContent = `Update available (${sys.cli_latest_version}). Checked and updated automatically on schedule.`;
+      }
+    } else {
+      if (cliBadge) cliBadge.style.display = 'none';
+      if (cliSubtext) {
+        cliSubtext.textContent = 'Morphe Desktop CLI jar. Checked and updated automatically on schedule.';
+      }
+    }
+  }
 
   const inpTz = document.getElementById('setting-timezone');
   if (inpTz && sys.timezone !== undefined) inpTz.value = sys.timezone || 'UTC';

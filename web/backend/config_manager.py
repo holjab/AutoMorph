@@ -1170,6 +1170,10 @@ def get_all_settings() -> dict[str, Any]:
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
     import dispatcher
+    import morphe_cli
+
+    cli_version = morphe_cli.get_installed_cli_version(PROJECT_ROOT)
+    formatted_cli_version = f"v{cli_version.lstrip('v')}" if cli_version else "Not Installed"
 
     available_endpoints = dispatcher.get_all_ingress_endpoints(data)
     resolved_endpoints = dispatcher.resolve_tunnel_endpoints(data)
@@ -1192,6 +1196,8 @@ def get_all_settings() -> dict[str, Any]:
             "schedule_time": schedule_time,
             "run_on_startup": run_on_startup,
             "timezone": timezone,
+            "cli_version": formatted_cli_version,
+            "morphe_cli_version": formatted_cli_version,
             "max_logs": max_logs,
             "max_original_packages": max_original_packages,
             "max_patched_packages": max_patched_packages,

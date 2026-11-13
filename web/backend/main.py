@@ -60,6 +60,15 @@ PROJECT_ROOT = Path(os.getenv("AUTOMORPH_ROOT", Path(__file__).resolve().parent.
 if (PROJECT_ROOT / ".env").is_file():
     load_dotenv(PROJECT_ROOT / ".env")
 
+scripts_dir = str(PROJECT_ROOT / "scripts")
+if scripts_dir not in sys.path:
+    sys.path.insert(0, scripts_dir)
+try:
+    import proxy_utils
+    proxy_utils.setup_proxy()
+except Exception as e:
+    logging.warning(f"Could not initialize proxy on startup: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Helper Models & Calculations
@@ -348,6 +357,18 @@ async def startup_event() -> None:
     # Apply configured system timezone
     config_manager.apply_timezone()
 
+    # Ensure Morphe CLI is downloaded on first-time startup if not present
+    try:
+        import morphe_cli
+        if not morphe_cli.is_cli_installed(PROJECT_ROOT):
+            logger.info("[*] Morphe CLI not detected on startup. Downloading latest CLI before server ready...")
+            try:
+                await asyncio.wait_for(asyncio.to_thread(morphe_cli.update_morphe_cli, PROJECT_ROOT), timeout=35.0)
+            except asyncio.TimeoutError:
+                logger.warning("[!] Morphe CLI startup download exceeded 35s timeout. Continuing startup in background...")
+    except Exception as e:
+        logger.warning(f"Could not check/download Morphe CLI on startup: {e}")
+
     # Start background scheduler
     asyncio.create_task(scheduler_background_loop())
 
@@ -497,6 +518,41 @@ async def get_settings() -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Error fetching settings: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings/cli/update")
+async def update_morphe_cli_endpoint(force: bool = False) -> dict[str, Any]:
+    """
+    Checks GitHub for Morphe CLI updates, downloads the latest release if available,
+    and updates tools/morphe.jar.
+    """
+    try:
+        import morphe_cli
+        res = await asyncio.to_thread(morphe_cli.update_morphe_cli, PROJECT_ROOT, force=force)
+        res["installed_version"] = morphe_cli.get_installed_cli_version(PROJECT_ROOT)
+        return res
+    except Exception as e:
+        logger.error(f"Error checking/updating Morphe CLI: {e}", exc_info=True)
+        import morphe_cli
+        return {
+            "status": "error",
+            "error": str(e),
+            "installed_version": morphe_cli.get_installed_cli_version(PROJECT_ROOT),
+        }
+
+
+@app.get("/api/settings/cli/version")
+async def get_morphe_cli_version_endpoint() -> dict[str, Any]:
+    """
+    Returns currently installed Morphe CLI version and jar path.
+    """
+    import morphe_cli
+    ver = morphe_cli.get_installed_cli_version(PROJECT_ROOT)
+    return {
+        "installed_version": ver,
+        "is_installed": morphe_cli.is_cli_installed(PROJECT_ROOT),
+        "jar_path": str(morphe_cli.get_morphe_jar_path(PROJECT_ROOT) or ""),
+    }
 
 
 @app.post("/api/settings/system")

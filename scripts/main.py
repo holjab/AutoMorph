@@ -12,6 +12,7 @@ import sys
 import apkpure_fetcher
 import logging
 import manager
+import morphe_cli
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,17 @@ def main(project_root: Path, conf: dict) -> None:
 
     interrupted = False
     try:
+        # Search for Morphe CLI updates first before checking app updates
+        logger.info("[*] Searching for Morphe CLI updates...")
+        try:
+            cli_res = morphe_cli.update_morphe_cli(project_root)
+            if cli_res.get("updated"):
+                logger.info(f" └── [✓] Morphe CLI updated to {cli_res.get('tag', cli_res.get('version'))}")
+            elif cli_res.get("status") == "up_to_date":
+                logger.info(f" └── [✓] Morphe CLI is up to date ({cli_res.get('version')})")
+        except Exception as e:
+            logger.warning(f" └── [!] Morphe CLI update check encountered an issue: {e}")
+
         original_dir, patched_dir, architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = init(project_root, conf)
         endpoints = dispatcher.resolve_tunnel_endpoints(conf)
         base_url = endpoints[0]['base_url']
@@ -135,6 +147,12 @@ def check_env(project_root: Path):
     except Exception as e:
         logger.error(f"Failed to load environment file: {e}")
 
+    try:
+        import proxy_utils
+        proxy_utils.setup_proxy()
+    except Exception as e:
+        logger.warning(f"Could not configure upstream proxy: {e}")
+
     if not os.getenv("SMTP_USERNAME") or not os.getenv("SMTP_PASSWORD"):
         logger.warning(f"[*] No SMTP_USERNAME, or SMTP_PASSWORD specified in enviroment. Unable to send email.")
 
@@ -184,7 +202,7 @@ def parse_yaml(conf: dict) -> tuple:
 
     return architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
 
-def check_patched_version(package_req: list, patched: Path, arch: str, sources: Path, force: bool):
+def check_patched_version(package_req: dict, patched: Path, arch: str, sources: Path, force: bool):
     logger.debug(f"\npackage_req:\n{package_req}\n")
     needs_patching = {}
 
@@ -192,20 +210,29 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
         patched_package_path = patched / package_name
         first_it = True
 
+        # If specific versions exist, ignore any placeholder 0.0.0 / 'any' / 'latest'
+        has_specific = any(v and str(v).strip().lower() not in ("0.0.0", "any", "latest", "any / latest") for v in version_list)
+        if has_specific:
+            filtered_list = [v for v in version_list if v and str(v).strip().lower() not in ("0.0.0", "any", "latest", "any / latest")]
+        else:
+            filtered_list = version_list
+
         target_versions_set = set()
-        for version in version_list:
+        for version in filtered_list:
             version_tup = version, False
 
-            logger.info(f"\n[*] {package_name} | v{version}")
-
-            if version is None or str(version).strip().lower() in ("0.0.0", "any", "latest", "any / latest"):
+            is_placeholder = version is None or str(version).strip().lower() in ("0.0.0", "any", "latest", "any / latest")
+            if is_placeholder:
+                logger.info(f"\n[*] {package_name} | Latest / No Version Requirement")
                 logger.info(f" ├── [!] No version requirement for {package_name}. Looking for most up-to-date version for download...")
                 version_dict = apkpure_fetcher.get_latest_version(package_name, arch, sources)
-                version = version_dict['version']
-                version_tup = version_dict['version'], True
+                version = version_dict.get('version') if isinstance(version_dict, dict) else None
+                version_tup = version, True
+            else:
+                logger.info(f"\n[*] {package_name} | v{version}")
 
-            if not version:
-                logger.warning(f" └── [!] Could not resolve version for {package_name}. Skipping...")
+            if not version or str(version).strip().lower() in ("0.0.0", "none", "any", "latest", "any / latest"):
+                logger.warning(f" └── [!] Could not resolve a valid version for {package_name}. Skipping (never fallback to 0.0.0)...")
                 continue
 
             if force:
@@ -241,7 +268,14 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
             target_versions_set.add(version_tup)
 
         if target_versions_set:
-            needs_patching[package_name] = {'target_versions': sorted(target_versions_set, key=lambda v: v[0], reverse=True), 'patch_attempt': 0}
+            needs_patching[package_name] = {
+                'target_versions': sorted(
+                    target_versions_set,
+                    key=lambda v: tuple(int(d) for d in re.findall(r"\d+", str(v[0]))) or (0, 0, 0),
+                    reverse=True
+                ),
+                'patch_attempt': 0
+            }
 
 
     logger.info("\n[*] SUMMARY: Packages in download list:")
@@ -258,9 +292,15 @@ def check_patched_version(package_req: list, patched: Path, arch: str, sources: 
     return needs_patching
 
 def patch_piepline(package_name, details, downloader, morphe, enabled_patches, patched_dir, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
-    targets = details['target_versions']
-    patch_attempt = details.get('patch_attempt', 0)
+    raw_targets = details.get('target_versions', [])
+    targets = [t for t in raw_targets if t and str(t[0]).strip().lower() not in ("0.0.0", "none", "any", "latest", "any / latest")]
     attempt_details = []
+
+    if not targets:
+        logger.warning(f"\n[✗] Skipping {package_name}: no valid target versions to patch (never fallback to 0.0.0).")
+        return False, attempt_details, {'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
+
+    patch_attempt = details.get('patch_attempt', 0)
     failed_downloads = set()
 
     while patch_attempt < (len(targets) * 2):

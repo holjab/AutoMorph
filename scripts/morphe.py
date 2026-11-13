@@ -542,8 +542,14 @@ class Morphe:
                             is_enabled = patches[patch_name].get('enabled', False)
 
                             if target_version != patch_version_name and is_enabled:
-                                logger.info(f"       └── [!] Disabling {patch_name} in {repo} as version does not match target.")
-                                patches[patch_name]['enabled'] = False
+                                if patch_version_name in ("0.0.0", "any", "latest"):
+                                    other_matched = any(pinfo[2] == target_version for r, pinfo in details.items() if r != repo)
+                                    if other_matched:
+                                        logger.info(f"       └── [!] Disabling {patch_name} in {repo} as another repo specifically matches {target_version}.")
+                                        patches[patch_name]['enabled'] = False
+                                else:
+                                    logger.info(f"       └── [!] Disabling {patch_name} in {repo} as version does not match target.")
+                                    patches[patch_name]['enabled'] = False
 
                             elif target_version == patch_version_name and not is_enabled:
                                 logger.info(f"       └── [!] Enabling {patch_name} in {repo} as version matches target.")
@@ -628,7 +634,11 @@ class Morphe:
                             first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
                             version_digits = re.findall(r"\d+", first_ver_line)
                             tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
-                            ver_str = first_ver_line.strip() if version_digits else "0.0.0"
+                            clean_ver = ""
+                            if version_digits:
+                                m = re.search(r"\b\d+(?:\.\d+)*[a-zA-Z0-9_\-\.]*\b", first_ver_line)
+                                clean_ver = m.group(0).strip() if m else ".".join(str(d) for d in version_digits)
+                            ver_str = clean_ver if (clean_ver and clean_ver != "0.0.0") else None
                             if pkg in enabled_patches_per_app:
                                 for alias, details in enabled_patches_per_app[pkg].items():
                                     if repo in details and details[repo] == patch_name:
@@ -638,7 +648,7 @@ class Morphe:
                         for app_pkg, aliases in enabled_patches_per_app.items():
                             for alias, details in aliases.items():
                                 if repo in details and details[repo] == patch_name:
-                                    enabled_patches_per_app_versions.setdefault(app_pkg, {}).setdefault(alias, {})[repo] = (patch_name, (0, 0, 0), '0.0.0')
+                                    enabled_patches_per_app_versions.setdefault(app_pkg, {}).setdefault(alias, {})[repo] = (patch_name, (0, 0, 0), None)
 
             else:
                 err_msg = result.stderr.strip().splitlines()[-1] if result.stderr else "Unknown error"
@@ -655,11 +665,15 @@ class Morphe:
                 for repo_detials in aliase_details.values():
                     tup_ver = repo_detials[1]
                     str_ver = repo_detials[2]
-                    version.add((tup_ver, str_ver))
+                    if str_ver and str(str_ver).strip().lower() not in ("0.0.0", "any", "latest", "any / latest", "none"):
+                        version.add((tup_ver, str_ver))
 
-            sorted_versions = sorted(version, key=lambda item: item[0], reverse=True)
-
-            package_req_tup[package_name] = [ver_str for _, ver_str in sorted_versions]
+            if version:
+                sorted_versions = sorted(version, key=lambda item: item[0], reverse=True)
+                package_req_tup[package_name] = [ver_str for _, ver_str in sorted_versions]
+            else:
+                # No patch specifies a version constraint -> request latest resolvable version, never fallback to 0.0.0
+                package_req_tup[package_name] = ["latest"]
 
         return package_req_tup
 
@@ -674,13 +688,14 @@ class Morphe:
             self.check_aliase_clash(package_name, target_version, enabled_patches_per_app_versions[package_name], options_to_use)
             logger.debug("run == 1")
         if run == 2:
-            target_tuple = tuple(int(x) for x in target_version.split("."))
+            target_digits = re.findall(r"\d+", target_version)
+            target_tuple = tuple(int(x) for x in target_digits)
             repo_per_version = self.check_repo_per_version(enabled_patches_per_app_versions[package_name])
             logger.debug(f"Check options to use, repo per version: {repo_per_version}")
             if latest:
-                repos = repo_per_version[(0, 0, 0)] 
+                repos = repo_per_version.get((0, 0, 0), set()) 
             else:
-                repos = repo_per_version[target_tuple]
+                repos = repo_per_version.get(target_tuple, set()) | repo_per_version.get((0, 0, 0), set())
             options_to_use = self.merge_target_repos(package_name, repos, target_version)
             self.check_aliase_clash(package_name, target_version, enabled_patches_per_app_versions[package_name], options_to_use)
             logger.debug("run == 2")
@@ -696,17 +711,27 @@ class Morphe:
     def check_repo_reqs(self, aliase_details: dict[str, dict[str, tuple[str, tuple[int, ...], str]]], target_version: str) -> set[str]:
         repos = set()
         for alias, repo_details in aliase_details.items():
+            matched_repo = None
+            # 1. Prefer repo whose patch explicitly matches target_version
             for repo, (patch_name, version_tuple, version_string) in repo_details.items():
                 if version_string == target_version:
-                    repos.add(repo)
+                    matched_repo = repo
                     break
-                else:
-                    best_candidate = max(repo_details.items(), key=lambda item: item[1][1])
-                    chosen_repo = best_candidate[0]
-                    if chosen_repo:
-                        repos.add(chosen_repo)
-                    else:
-                        logger.error(f" └── [!] No repo found for alias: {alias}")
+            # 2. Prefer universal / version-agnostic repo (0.0.0)
+            if not matched_repo:
+                for repo, (patch_name, version_tuple, version_string) in repo_details.items():
+                    if version_string in ("0.0.0", "any", "latest") or version_tuple == (0, 0, 0):
+                        matched_repo = repo
+                        break
+            # 3. Fallback to candidate with highest version
+            if not matched_repo and repo_details:
+                best_candidate = max(repo_details.items(), key=lambda item: item[1][1])
+                matched_repo = best_candidate[0]
+
+            if matched_repo:
+                repos.add(matched_repo)
+            else:
+                logger.error(f" └── [!] No repo found for alias: {alias}")
         return repos
 
     def check_repo_per_version(self, aliase_details: dict[str, dict[str, tuple[str, tuple[int, ...], str]]]) -> dict[tuple[int, ...], set[str]]:
@@ -720,6 +745,10 @@ class Morphe:
 
     def patch(self, package_name: str, version_name: str, repos: set[str], options_to_use: Path, striplibs: bool, strat: int) -> tuple[bool, Path | str | None, str | None, dict | None]:
         dest = None
+
+        if not version_name or str(version_name).strip().lower() in ("0.0.0", "none", "any", "latest", "any / latest"):
+            logger.error(f" └── [!] Invalid version '{version_name}' for patching {package_name}. Never fallback to 0.0.0.")
+            return False, dest, f"Invalid version '{version_name}'", None
 
         cmd = ["java"]
 

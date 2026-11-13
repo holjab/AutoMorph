@@ -164,6 +164,25 @@ To prevent your storage disk from filling up:
 * **Max Patched Packages**: Number of completed patched APKs to retain per app.
 * **Max Logs**: Number of historical build log files to keep.
 
+### 5.5 Upstream Proxy & Bypass (Optional)
+* **What it does**: Routes all upstream connections (APKPure, APKMirror, APKCombo, Uptodown, Aptoide, Google Play Store via `goopdl`, GitHub releases, and update checks) through an HTTP or SOCKS5 proxy.
+* **How to configure**:
+  * `PROXY_URL`: Set your HTTP or SOCKS5 proxy (e.g. `PROXY_URL=http://127.0.0.1:8080` or `PROXY_URL=socks5://127.0.0.1:1080`).
+  * `BYPASS_PROXY`: Optional comma-separated list of hosts or subnets to exclude from the proxy (e.g. `192.168.1.0/24,internal.domain`). `localhost`, `127.0.0.1`, and `flaresolverr` are always bypassed automatically.
+  * If `PROXY_URL` is omitted or empty, direct connections are used.
+
+### 5.6 FlareSolverr (Cloudflare Challenge Bypass)
+* **What it does**: Bypasses Cloudflare anti-bot verification ("not allowed by policy", 403 Forbidden, and Turnstile challenges) on APKMirror, APKCombo, and other protected sources using headless Chromium.
+* **How to configure**:
+  * Enable the built-in FlareSolverr container in `.env`: `COMPOSE_PROFILES=flaresolverr`
+  * Set `FLARESOLVERR_URL=http://flaresolverr:8191/v1` in `compose.yaml` or `.env`.
+  * For an external instance, specify its URL: `FLARESOLVERR_URL=http://localhost:8191/v1`.
+
+### 5.7 Proxy & FlareSolverr Flow
+* **If only `PROXY_URL` is set**: All upstream connections are routed through the proxy.
+* **If only `FLARESOLVERR_URL` is set**: Direct connections are used for standard requests, and FlareSolverr is invoked whenever Cloudflare challenges or 403 errors occur.
+* **If BOTH `PROXY_URL` and `FLARESOLVERR_URL` are set**: Standard connections route through `PROXY_URL`, and when FlareSolverr is invoked for Cloudflare-protected sources, FlareSolverr is also instructed to route its browser traffic through `PROXY_URL`.
+
 ---
 
 ## 6. Custom Keystore & Seamless Updates (Morphe App Compatibility)

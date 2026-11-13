@@ -1,4 +1,4 @@
-# ---- Stage 1: build a trimmed Java 21 runtime & fetch morphe ----
+# ---- Stage 1: build a trimmed Java 21 runtime ----
 FROM alpine:3.21 AS jre-build
 
 RUN apk add --no-cache \
@@ -22,11 +22,6 @@ RUN KEYSTORE=$(find /usr/lib/jvm -name cacerts | head -n 1) && \
     cp -L "$KEYSTORE" /rootfs/opt/java/runtime/lib/security/cacerts && \
     test -s /rootfs/opt/java/runtime/lib/security/cacerts && \
     /rootfs/opt/java/runtime/bin/java -version
-
-ARG MORPHE_VERSION=2.1.0
-RUN wget -q -O /rootfs/automorph/tools/morphe-desktop-${MORPHE_VERSION}-all.jar \
-    "https://github.com/MorpheApp/morphe-desktop/releases/download/v${MORPHE_VERSION}/morphe-desktop-${MORPHE_VERSION}-all.jar" && \
-    ln -sf "/automorph/tools/morphe-desktop-${MORPHE_VERSION}-all.jar" /rootfs/automorph/tools/morphe.jar
 
 
 # ---- Stage 2: app image ----

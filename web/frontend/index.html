@@ -386,6 +386,22 @@
               <div class="form-subtext">Daily automated execution trigger (HH:MM).</div>
             </div>
 
+            <!-- Morphe CLI Version -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                <label class="form-label" for="setting-cli-version" style="margin-bottom: 0;">Morphe CLI Version</label>
+                <span id="cli-update-badge" class="badge badge-info" style="font-size: 0.7rem; display: none;">Update Available</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="text" id="setting-cli-version" class="form-control" value="Loading..." readonly style="cursor: default; font-family: var(--font-mono); color: var(--primary-cyan); font-weight: 600;">
+                <button id="btn-update-cli" class="btn btn-secondary btn-sm" type="button" title="Check for Morphe CLI updates and download if available" style="white-space: nowrap; height: 38px; display: inline-flex; align-items: center; gap: 6px;">
+                  <span class="material-symbols-rounded" style="font-size: 16px;">sync</span>
+                  <span>Check Update</span>
+                </button>
+              </div>
+              <div class="form-subtext" id="setting-cli-subtext">Morphe Desktop CLI jar used for patching. Updated on schedule.</div>
+            </div>
+
           </div>
 
           <!-- Retention & Storage Limits Grid -->
