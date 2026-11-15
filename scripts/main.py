@@ -341,7 +341,7 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
                 logger.info(f" └── [!] Patch failed on v{target_version} with all enabled patches attempted. Falling back to next version...")
             else:
                 logger.info(f" └── [!] Patch failed on v{target_version} with all enabled patches attempted. No more versions to try.")
-                logger.info(f"      └── Will attempt to patch {targets[0]} with only version compatible patches enabled...")
+                logger.info(f"      └── Will attempt to patch {list(targets.values())[0]['version_str']} with only version compatible patches enabled...")
 
         else:
             if patch_attempt < (len(targets) * 2) - 1:
