@@ -823,9 +823,19 @@ class Morphe:
             if e.returncode in (130, 143, -2, -15, -9) or e.returncode < 0:
                 logger.critical("\n └── [!] Patch process cancelled by user.")
                 raise KeyboardInterrupt("Patching interrupted by user")
-            error_msg = next((line.strip() for line in e.stderr.splitlines() if line.strip()), "Unknown CLI error") if e.stderr else "Unknown CLI error"
+
+            stderr_raw = e.stderr.strip() if e.stderr else ""
+            stdout_raw = e.stdout.strip() if e.stdout else ""
+            error_msg = next((line.strip() for line in stderr_raw.splitlines() if line.strip()), "Unknown CLI error")
+
             logger.error(f" └── [!] Morphe CLI failed (exit code {e.returncode}): {error_msg}")
-            return False, dest, f"Morphe CLI failed (exit code {e.returncode}): {error_msg}", None
+            if stderr_raw and stderr_raw != error_msg:
+                logger.error(f"Morphe CLI stderr:\n{stderr_raw}")
+            if stdout_raw:
+                logger.debug(f"Morphe CLI stdout:\n{stdout_raw}")
+
+            full_reason = f"Morphe CLI failed (exit code {e.returncode}): {error_msg}\n{stderr_raw}" if (stderr_raw and stderr_raw != error_msg) else f"Morphe CLI failed (exit code {e.returncode}): {error_msg}"
+            return False, dest, full_reason, None
 
         except FileNotFoundError:
             logger.error(" └── [!] Java executable not found. Ensure Java is installed and on your PATH.")
