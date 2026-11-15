@@ -14,50 +14,49 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Downloader:
-    def __init__(self, org_path: Path, architecture: str, project_root: Path) -> None:
+    def __init__(self, org_path: Path, project_root: Path) -> None:
         self.org_path = org_path
-        self.architecture = architecture
         self.sources_file = (project_root / "tools" / "automorph-data" / "app_sources.yaml") if (project_root / "tools" / "automorph-data" / "app_sources.yaml").is_file() else (project_root / "tools" / "app_sources.yaml")
 
 #################################
 #        DOWNLOAD LOGIC         #
 #################################
 
-    def download_package_main(self, package_name: str, target_version: str, target_vc: int | str) -> tuple[dict | None, str | None]: 
-        logger.info(f"\n[*] {package_name} | v{target_version} | vc: {target_vc} | {self.architecture}")
+    def download_package_main(self, package_name: str, target_version: str, target_vc: int | str, arch: str) -> tuple[dict | None, str | None]: 
+        logger.info(f"\n[*] {package_name} | v{target_version} | vc: {target_vc} | {arch}")
 
         package = {}
         outer_dir = self.make_dir(package_name, target_version)
         split_dir = outer_dir / f"{package_name}"
 
-        exists, version_code = self.check_exists(outer_dir, self.architecture, target_version, target_vc, package_name, split_dir)
+        exists, version_code = self.check_exists(outer_dir, arch, target_version, target_vc, package_name, split_dir)
 
         if exists:
-            patch_details = {"package_name": package_name, "version_name": target_version, "arch": self.architecture, 'patch_attempt': 0}
-            logger.info(f" └── [✓] {package_name} v{target_version} already exists with correct arch.")
-            package = {package_name: {target_version: {'version_code': version_code, 'arch': self.architecture}}}
+            patch_details = {"package_name": package_name, "version_name": target_version, "arch": arch, 'patch_attempt': 0}
+            logger.info(f" └── [✓] {package_name} v{target_version} already exists with {arch}.")
+            package = {package_name: {target_version: {'version_code': version_code, 'arch': arch}}}
             return patch_details, f"{package_name} already exists", package
 
         is_valid_vc = isinstance(target_vc, int) or (isinstance(target_vc, str) and target_vc.isdigit())
         if is_valid_vc:
-            success, reason = self.try_source("gplay", package_name, None, outer_dir, target_version, self.architecture, split_dir, [str(target_vc)])
+            success, reason = self.try_source("gplay", package_name, None, outer_dir, target_version, arch, split_dir, [str(target_vc)])
             if success:
                 logger.info(" └── [✓] Ready to patch.")
-                patch_details = {"package_name": package_name, "version_name": target_version, "arch": self.architecture, 'patch_attempt': 0}
+                patch_details = {"package_name": package_name, "version_name": target_version, "arch": arch, 'patch_attempt': 0}
                 package = {
                     package_name: {
                         target_version: {
                             'version_code': int(target_vc),
-                            'arch': self.architecture
+                            'arch': arch
                         }
                     }
                 }
                 return patch_details, reason, package
             else:
-                logger.warning(f" └── [!] Could not download {package_name}, v{target_version}, vc: {target_vc} from google. Reason {reason}")
+                logger.warning(f" └── [!] Could not download {package_name} {arch}, v{target_version}, vc: {target_vc} from google. Reason {reason}")
                 logger.info(" └── Will attempt to fetch correct package")
 
-        result = apkpure_fetcher.process_package(package_name, target_version, self.architecture, self.sources_file)
+        result = apkpure_fetcher.process_package(package_name, target_version, arch, self.sources_file)
         package = self.package_details(result, target_version)
         patch_list, reason = self.download_package(result, outer_dir, split_dir, int(target_vc) if is_valid_vc else None)
         if patch_list and is_valid_vc:
@@ -182,7 +181,7 @@ class Downloader:
                 for versioncode in versioncodes:
                     if versioncode != None:
                         logger.info(f" │    ├── Inspecting version code {versioncode}...")
-                        cmd = ["goopdl", "inspect-delivery", package_name, "--arch", arch, "--version", versioncode, "--json"]
+                        cmd = ["goopdl", "inspect-delivery", package_name, "--arch", arch, "--version", str(versioncode), "--json"]
 
                     else:
                         logger.info(" │    ├── Inspecting latest version...")

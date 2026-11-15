@@ -25,7 +25,7 @@ def main(project_root: Path, conf: dict) -> None:
 
     interrupted = False
     try:
-        original_dir, patched_dir, architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = init(project_root, conf)
+        original_dir, patched_dir, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = init(project_root, conf)
         endpoints = dispatcher.resolve_tunnel_endpoints(conf)
         base_url = endpoints[0]['base_url']
         init_completed = True
@@ -38,6 +38,7 @@ def main(project_root: Path, conf: dict) -> None:
             manager.remake_patched(project_root, base_url, architecture, patched_json, patched_dir)
 
         target_pkg = os.getenv("TARGET_PACKAGE") or (sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None)
+
         if target_pkg:
             force = True
 
@@ -45,11 +46,12 @@ def main(project_root: Path, conf: dict) -> None:
                 target_repos = detailed_app_list[target_pkg]['repos']
                 detailed_app_list = {target_pkg: detailed_app_list[target_pkg]}
                 repo_details = {r: details for r, details in repo_details.items() if r in target_repos}
+                override_repo = detailed_app_list.get('override_repo')
             else:
                 logger.warning(f"[!] Target package '{target_pkg}' not found in configured apps list.")
         
-        morphe = Morphe(project_root, original_dir, patched_dir, architecture, detailed_app_list, repo_details, low_spec_mode, force, base_url)
-        downlader = Downloader(original_dir, architecture, project_root)
+        morphe = Morphe(project_root, original_dir, patched_dir, detailed_app_list, repo_details, low_spec_mode, force, base_url)
+        downlader = Downloader(original_dir, project_root)
         
         result = morphe.package_req_main()
 
@@ -58,7 +60,7 @@ def main(project_root: Path, conf: dict) -> None:
 
         package_version_req, enabled_patches = result
         sources = project_root / "tools" / "automorph-data" / "app_sources.yaml"
-        download_list = check_patched_version(package_version_req, patched_dir, architecture, sources, force)
+        download_list = check_patched_version(package_version_req, patched_dir, sources, force, detailed_app_list)
 
         if target_pkg:
             download_list = {k: v for k, v in download_list.items() if k == target_pkg}
@@ -101,14 +103,14 @@ def main(project_root: Path, conf: dict) -> None:
                 duration=duration_seconds,
                 dry_run=False,
                 project_root=project_root,
-                build_flags={"striplibs": striplibs, "architecture": architecture, "low_spec_mode": low_spec_mode},
+                build_flags={"striplibs": striplibs, "architecture": "architecture", "low_spec_mode": low_spec_mode},
             )
 
 def init(project_root: Path, conf: dict) -> tuple:
     original_dir, patched_dir = make_paths(project_root, conf)
     check_env(project_root)
-    architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = parse_yaml(conf)
-    return original_dir, patched_dir, architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
+    striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = parse_yaml(conf)
+    return original_dir, patched_dir, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
     
 def make_paths(project_root: Path, conf: dict) -> tuple[Path, Path]:
 
@@ -144,7 +146,7 @@ def check_env(project_root: Path):
 
 def parse_yaml(conf: dict) -> tuple: 
     low_spec_mode = conf.get("low_spec_mode", False)
-    architecture = conf["architecture"]
+    # architecture = conf["architecture"]
     striplibs = conf["striplibs"]
     max_original_packages = conf.get('max_original_packages')
     max_patched_packages = conf.get('max_patched_packages')
@@ -160,8 +162,8 @@ def parse_yaml(conf: dict) -> tuple:
         aliase_map = {}
         package_name = package.get('package_name')
         repos = package.get('repos') or []
-
         patch_aliases = package.get('patch_aliases') or []
+        override_arch = package.get('override_arch') or conf["architecture"]
 
         for alias in patch_aliases:
             if not alias:
@@ -184,20 +186,22 @@ def parse_yaml(conf: dict) -> tuple:
             repo_name = match[0][2]
             repo_details[repo] = {'owner': owner, 'repo_name': repo_name, 'repo_type': repo_type}
 
-        detailed_app_list.setdefault(package_name, {}).update({'repos': repos, 'patch_aliases': aliase_map}) 
+        detailed_app_list.setdefault(package_name, {}).update({'repos': repos, 'patch_aliases': aliase_map, 'override_arch': override_arch}) 
 
-    return architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
+    return striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
 
-def check_patched_version(package_req: dict | list, patched: Path, arch: str, sources: Path, force: bool):
+def check_patched_version(package_req: dict | list, patched: Path, sources: Path, force: bool, detailed_app_list: dict):
     logger.debug(f"\npackage_req:\n{package_req}\n")
     needs_patching = {}
 
     for package_name, version_list in package_req.items():
         patched_package_path = patched / package_name
+        arch = detailed_app_list[package_name]['override_arch']
         first_it = True
-
         target_versions = {}
+
         for version in version_list:
+
             if isinstance(version_list, dict):
                 version_info = version_list[version]
                 version_tup = version_info.get('tup_ver', (0, 0, 0)), False
@@ -206,12 +210,11 @@ def check_patched_version(package_req: dict | list, patched: Path, arch: str, so
                 if version_info.get('abi_version_codes'):
                     target_vc = version_info['abi_version_codes'].get(arch, "No version code for target arch")
             else:
-                # Fallback for legacy list format: version_list is [ver_str, ...]
                 version_digits = re.findall(r"\d+", str(version))
                 version_tup = (tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)), False
                 target_vc = "No version codes supplied by patch"
 
-            logger.info(f"\n[*] {package_name} | v{version} | vc: {target_vc}")
+            logger.info(f"\n[*] {package_name} | {arch} | v{version} | vc: {target_vc}")
 
             if version is None or str(version).strip().lower() in ("0.0.0", "any", "latest", "any / latest"):
                 logger.info(f" ├── [!] No version requirement for {package_name}. Looking for most up-to-date version for download...")
@@ -258,14 +261,14 @@ def check_patched_version(package_req: dict | list, patched: Path, arch: str, so
 
         if target_versions:
             sorted_target_versions = dict(sorted(target_versions.items(), key=lambda item: item[0], reverse=True))
-            needs_patching[package_name] = {'target_versions': sorted_target_versions, 'patch_attempt': 0}
+            needs_patching[package_name] = {'target_versions': sorted_target_versions, 'patch_attempt': 0, 'arch': arch}
 
     logger.info("\n[*] SUMMARY: Packages in download list:")
     if needs_patching:
         for pkg, needs_patching_details in needs_patching.items():
             for i, ver_details in enumerate(needs_patching_details['target_versions'].values()):
                 if i == 0:
-                    logger.info(f" └── {pkg} | v{ver_details['version_str']} | vc: {ver_details['version_code']}")
+                    logger.info(f" └── {pkg} | {arch} | v{ver_details['version_str']} | vc: {ver_details['version_code']}")
                 else:
                     logger.info(f"       └── Backup no. {i}: v{ver_details['version_str']} | vc: {ver_details['version_code']}")
     else:
@@ -276,6 +279,7 @@ def check_patched_version(package_req: dict | list, patched: Path, arch: str, so
 def patch_piepline(package_name: str, details: dict, downloader: Downloader, morphe: Morphe, enabled_patches: dict, patched_dir: Path, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
     targets = details['target_versions']
     patch_attempt = details.get('patch_attempt', 0)
+    arch = details['arch']
     attempt_details = []
     failed_downloads = set()
 
@@ -286,14 +290,14 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
             latest = target[1]
             target_version = target_details['version_str']
             target_vc = target_details['version_code']
-            patched_package = patched_dir / package_name / target_version / f"{package_name}_{target_version}_patched.apk"
+            patched_package = patched_dir / package_name / target_version / f"{package_name}_{target_version}_{arch}_patched.apk"
         else:
             run = 2
             target, target_details = list(targets.items())[(patch_attempt - len(targets))]
             latest = target[1]
             target_version = target_details['version_str']
             target_vc = target_details['version_code']
-            patched_package = patched_dir / package_name / target_version / f"{package_name}_{target_version}_patched.apk"
+            patched_package = patched_dir / package_name / target_version / f"{package_name}_{target_version}_{arch}_patched.apk"
 
             if len(failed_downloads) == len(targets):
                 break
@@ -302,10 +306,10 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
                 continue
 
         if patched_package.is_file() and not force:
-            logger.info(f" └── [✓] {package_name} v{target_version} is already patched.")
+            logger.info(f" └── [✓] {package_name} {arch} v{target_version} is already patched.")
             return True, attempt_details, {'repos': None, "strat": run, 'output_dest': patched_package, 'attempt': None}
 
-        patch_list, dl_reason, package = downloader.download_package_main(package_name, target_version, target_vc)
+        patch_list, dl_reason, package = downloader.download_package_main(package_name, target_version, target_vc, arch)
 
         if not patch_list:
             logger.warning(f" └── [!] Base APK download/verification failed for v{target_version}.")
@@ -341,7 +345,7 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
                 logger.info(f" └── [!] Patch failed on v{target_version} with all enabled patches attempted. Falling back to next version...")
             else:
                 logger.info(f" └── [!] Patch failed on v{target_version} with all enabled patches attempted. No more versions to try.")
-                logger.info(f"      └── Will attempt to patch {targets[0]} with only version compatible patches enabled...")
+                logger.info(f"      └── Will attempt to patch {list(targets.values())[0]['version_str']} with only version compatible patches enabled...")
 
         else:
             if patch_attempt < (len(targets) * 2) - 1:
