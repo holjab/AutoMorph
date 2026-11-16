@@ -859,6 +859,25 @@
           </button>
         </div>
 
+        <!-- Target Architecture -->
+        <div class="form-group" style="background: var(--bg-surface-elevated); padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); margin-bottom: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label class="form-label" for="wiz-app-arch" style="display: flex; align-items: center; gap: 6px; margin-bottom: 0;">
+              <span class="material-symbols-rounded" style="font-size: 16px; color: var(--primary-cyan);">memory</span>
+              <span>Architecture</span>
+            </label>
+            <span id="wiz-arch-badge" class="badge" style="font-size: 0.6875rem;">System Default</span>
+          </div>
+          <select id="wiz-app-arch" class="form-control">
+            <option value="arm64-v8a">arm64-v8a (64-bit ARM • Modern Phones)</option>
+            <option value="armeabi-v7a">armeabi-v7a (32-bit ARM • Legacy Devices)</option>
+            <option value="x86_64">x86_64 (64-bit Intel/AMD • Emulators)</option>
+            <option value="x86">x86 (32-bit Intel/AMD • Emulators)</option>
+            <option value="all">all (Universal / Multi-Architecture)</option>
+          </select>
+          <div class="form-subtext">ABIs to keep for this package. Defaults to system architecture.</div>
+        </div>
+
         <div class="repo-selection-toolbar" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 10px 14px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); margin-bottom: 14px;">
           <div style="display: flex; align-items: center; gap: 8px;">
             <span class="material-symbols-rounded" style="color: var(--primary-cyan); font-size: 18px;">checklist</span>
@@ -1082,6 +1101,25 @@
               <span class="material-symbols-rounded" style="font-size: 16px;">sync</span>
               <span>Refresh Repos</span>
             </button>
+          </div>
+
+          <!-- Target Architecture -->
+          <div class="form-group" style="background: var(--bg-surface-elevated); padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label class="form-label" for="edit-app-arch" style="display: flex; align-items: center; gap: 6px; margin-bottom: 0;">
+                <span class="material-symbols-rounded" style="font-size: 16px; color: var(--primary-cyan);">memory</span>
+                <span>Architecture</span>
+              </label>
+              <span id="edit-arch-badge" class="badge" style="font-size: 0.6875rem;">System Default</span>
+            </div>
+            <select id="edit-app-arch" class="form-control">
+              <option value="arm64-v8a">arm64-v8a (64-bit ARM • Modern Phones)</option>
+              <option value="armeabi-v7a">armeabi-v7a (32-bit ARM • Legacy Devices)</option>
+              <option value="x86_64">x86_64 (64-bit Intel/AMD • Emulators)</option>
+              <option value="x86">x86 (32-bit Intel/AMD • Emulators)</option>
+              <option value="all">all (Universal / Multi-Architecture)</option>
+            </select>
+            <div class="form-subtext">ABIs to keep for this package. Defaults to the system architecture.</div>
           </div>
 
           <!-- Master Selection Bar for Repositories -->

@@ -70,6 +70,8 @@ class AppConfigRequest(BaseModel):
     package_name: str | None = None
     repos: list[str] = []
     patch_aliases: list[dict[str, Any]] = []
+    override_arch: str | None = None
+    architecture: str | None = None
 
 
 class AppToggleRequest(BaseModel):
