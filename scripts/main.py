@@ -160,7 +160,7 @@ def parse_yaml(conf: dict) -> tuple:
         aliase_map = {}
         package_name = package.get('package_name')
         repos = package.get('repos') or []
-
+        pre_release = package.get('pre-release') or False
         patch_aliases = package.get('patch_aliases') or []
 
         for alias in patch_aliases:
@@ -182,9 +182,17 @@ def parse_yaml(conf: dict) -> tuple:
             repo_type = match[0][0]
             owner = match[0][1]
             repo_name = match[0][2]
-            repo_details[repo] = {'owner': owner, 'repo_name': repo_name, 'repo_type': repo_type}
 
-        detailed_app_list.setdefault(package_name, {}).update({'repos': repos, 'patch_aliases': aliase_map}) 
+            repo_details.setdefault(repo, {
+                'owner': owner,
+                'repo_name': repo_name,
+                'repo_type': repo_type,
+                'repo_options': set()
+            })
+
+            repo_details[repo]['repo_options'].add('pre-release' if pre_release else 'latest')
+
+        detailed_app_list.setdefault(package_name, {}).update({'repos': repos, 'patch_aliases': aliase_map, 'pre-release': pre_release}) 
 
     return architecture, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
 

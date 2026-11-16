@@ -73,6 +73,7 @@ class Morphe:
 #################################
 
     def scan_updates(self) -> dict[str, set[str]]:
+        self.check_pre_release()
         new_repo_versions = self.find_repo_version()
         updated_repos = self.check_repo_update(new_repo_versions)
 
@@ -85,41 +86,25 @@ class Morphe:
         
         return self.check_options_change(updated_repos)
 
+    def check_pre_release(self):
+        pass
+
     def find_repo_version(self) -> dict[str, list[str]] | None:
         repo_version = {}
+        token = os.getenv("GITHUB_TOKEN")
 
         for repo in self.repo_details:
             owner = self.repo_details[repo]['owner']
             repo_name = self.repo_details[repo]['repo_name']
             repo_type = self.repo_details[repo]['repo_type']
+            repo_options = self.repo_details[repo]['repo_options']
 
             if not owner or not repo_name:
                 logger.error(f"Unable to find owner or repo of {repo}")
                 return None
 
-            if repo_type == 'github' or repo_type == 'gitlab':
-                headers = {
-                    "User-Agent": "MorpheUpdater",
-                    "Accept": "application/json",
-                }
-
-            if repo_type == 'github':
-                api_url = f"https://api.github.com/repos/{owner}/{repo_name}/releases/latest"      
-
-                token = os.getenv("GITHUB_TOKEN")
-                if token:
-                    headers["Authorization"] = f"Bearer {token}"
-
-            elif repo_type == 'gitlab':
-                project_path = urllib.parse.quote(f"{owner}/{repo_name}", safe="")
-                api_url = f"https://gitlab.com/api/v4/projects/{project_path}/releases/permalink/latest"
-            
-            else:
-                logger.warning(f" └── [✗] Unknown repo type: {repo_type} for {repo}")
-                continue
-
-            self.repo_details[repo].update({'api_url': api_url, 'headers': headers}) 
-
+            self.make_api_urls(self.repo_details[repo], token)
+            continue 
             try:
                 response = requests.get(api_url, headers=headers, timeout=10)
                 if response.status_code == 200:
@@ -134,6 +119,54 @@ class Morphe:
                 logger.error(f" └── [!] Failed checking release for {owner}/{repo}: {e}")
 
         return repo_version
+
+    def make_api_urls(self, repo_details: dict, token: str):
+        owner = repo_details['owner']
+        repo_name = repo_details['repo_name']
+        repo_type = repo_details['repo_type']
+        repo_options = repo_details['repo_options']
+        api_urls = set()
+
+        if repo_type == 'github' or repo_type == 'gitlab':
+            headers = {
+                "User-Agent": "MorpheUpdater",
+                "Accept": "application/json",
+            }
+        else:
+            logger.warning(f" └── [✗] Unknown repo type: {repo_type} for {owner} - {repo_name}")
+            return            
+
+        if len(repo_options) == 1:
+            if 'latest' in repo_options:
+                if repo_type == 'github':
+                    api_url = f"https://api.github.com/repos/{owner}/{repo_name}/releases/latest"      
+
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+
+                elif repo_type == 'gitlab':
+                    project_path = urllib.parse.quote(f"{owner}/{repo_name}", safe="")
+                    api_url = f"https://gitlab.com/api/v4/projects/{project_path}/releases/permalink/latest"
+            
+            elif 'pre-release' in repo_options:
+                if repo_type == 'github':
+                    api_url = f"https://api.github.com/repos/{owner}/{repo_name}/releases"      
+
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+
+                elif repo_type == 'gitlab':
+                    project_path = urllib.parse.quote(f"{owner}/{repo_name}", safe="")
+                    api_url = f"https://gitlab.com/api/v4/projects/{project_path}/releases/permalink"
+
+
+
+            api_urls.add(api_url)
+            repo_details.update({'api_urls': api_urls, 'headers': headers})
+
+
+        
+
 
     def check_repo_update(self, new_repo_versions: dict[str, list[str]]) -> dict[str, set[str]]:
         repo_search = {} 
