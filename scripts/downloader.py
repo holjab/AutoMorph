@@ -208,9 +208,12 @@ class Downloader:
                         logger.error(f" │    └── [!] Could not parse goopdl output: {result.stdout!r}")
                         return False, "json error", None
 
-                    if found['package'] == package_name and found['architecture'] == arch:
-                            logger.info(" │    └── [✓] Found package matches name, version and arch...")
-                            return True, found['version']['code'], version_name
+                    if found.get('package') == package_name and not found.get('architecture_mismatch', False):
+                        logger.info(" │    └── [✓] Found package matches name, version and arch...")
+                        return True, found['version']['code'], version_name
+                    
+                    elif found.get('architecture_mismatch'):
+                        logger.warning(f" │    └── [!] Architecture mismatch detected by goopdl (delivered: {found.get('delivered_abis')})")
                 
                 logger.warning(f" └── [✗] Failed to locate matching package on Google Play for {package_name}")
                 

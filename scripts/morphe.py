@@ -748,7 +748,7 @@ class Morphe:
 
         return output 
 
-    def patch(self, package_name: str, version_name: str, repos: set[str], options_to_use: Path, striplibs: bool, strat: int) -> tuple[bool, Path | str | None, str | None, dict | None]:
+    def patch(self, package_name: str, version_name: str, repos: set[str], options_to_use: Path, striplibs: bool, strat: int, arch: str, output: Path) -> tuple[bool, Path | str | None, str | None, dict | None]:
         dest = None
 
         cmd = ["java"]
@@ -777,12 +777,11 @@ class Morphe:
 
             cmd += ["--patches", str(mpp_path)]
 
-        if striplibs:
-            cmd += ["--striplibs", self.arch]
+        if striplibs and arch not in ("all", "universal"):
+            cmd += ["--striplibs", arch]
 
-        output_dest = self.patched_dir / package_name / version_name / f"{package_name}_{version_name}_patched.apk"
-        output_dest.parent.mkdir(parents=True, exist_ok=True)
-        result_dest = output_dest.parent / "result.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        result_dest = output.parent / "result.json"
         version_dir = self.original_dir / package_name / version_name
         candidate_names = (
             f"{package_name}.xapk",
@@ -801,19 +800,19 @@ class Morphe:
         if strat == 1:
             cmd += ["--force"]
 
-        cmd += ["--out", str(output_dest), str(input_package)]
+        cmd += ["--out", str(output), str(input_package)]
 
         try:
             logger.info(f"[*] Attempting to patch package: {package_name}, version: {version_name}...")
             logger.debug(f"Patch command:\n{cmd}\n")
             subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-            if output_dest.is_file():
+            if output.is_file():
                 now = datetime.now()
                 timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
                 time_ms = int(now.timestamp() * 1000)
                 logger.info(f" └── [✓] Successfully patched {package_name} v{version_name}")
-                return True, output_dest, result_dest, {'time': timestamp, 'time_ms': time_ms}
+                return True, output, result_dest, {'time': timestamp, 'time_ms': time_ms}
             else:
                 logger.error(" └── [!] Java exited with code 0, but output APK was not found.")
                 return False, dest, "Java exited with code 0, but output APK was not found.", None

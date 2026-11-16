@@ -25,7 +25,7 @@ def main(project_root: Path, conf: dict) -> None:
 
     interrupted = False
     try:
-        original_dir, patched_dir, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = init(project_root, conf)
+        original_dir, patched_dir, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages, global_arch = init(project_root, conf)
         endpoints = dispatcher.resolve_tunnel_endpoints(conf)
         base_url = endpoints[0]['base_url']
         init_completed = True
@@ -35,7 +35,7 @@ def main(project_root: Path, conf: dict) -> None:
         patched_json = state_dir / "patched.json"
 
         if not patched_json.is_file():
-            manager.remake_patched(project_root, base_url, architecture, patched_json, patched_dir)
+            manager.remake_patched(project_root, base_url, patched_json, patched_dir)
 
         target_pkg = os.getenv("TARGET_PACKAGE") or (sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None)
 
@@ -73,10 +73,10 @@ def main(project_root: Path, conf: dict) -> None:
                 
             if not result:
                 logger.warning(f"[✗] Skipping {package_name}: patching could not be completed.")      
-                patch_failures[package_name] = {'target_versions': details.get('target_versions', []), 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'attempts': attempt_details}
+                patch_failures[package_name] = {'target_versions': details.get('target_versions', []), 'arch': details.get('arch', None), 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'attempts': attempt_details}
                 continue       
 
-            patch_success[package_name] = {'dest': patched_details['output_dest'], 'arch': architecture, 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': patched_details['strat'], 'attempt': patched_details['attempt'], 'attempts': attempt_details}
+            patch_success[package_name] = {'dest': patched_details['output_dest'], 'arch': details.get('arch', None), 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': patched_details['strat'], 'attempt': patched_details['attempt'], 'attempts': attempt_details}
             
             if patched_details['attempt'] is not None:
                 patched[package_name] = patched_details
@@ -92,9 +92,9 @@ def main(project_root: Path, conf: dict) -> None:
             duration_seconds = time.perf_counter() - start_time
 
             if patch_executed:
-                manager.main(patched, morphe.repo_details, morphe.detailed_patch_list, base_url, morphe.morphe_location, state_dir, architecture, morphe.enabled_patches_per_app)
+                manager.main(patched, morphe.repo_details, morphe.detailed_patch_list, base_url, morphe.morphe_location, state_dir, morphe.enabled_patches_per_app)
             
-            manager.clean(max_original_packages, max_patched_packages, state_dir, original_dir, patched_dir, patched_json)
+            manager.clean(max_original_packages, max_patched_packages, original_dir, patched_dir, patched_json)
             manager.build_all_jsons(state_dir, patched_json, base_url)
 
             dispatcher.main(
@@ -103,14 +103,14 @@ def main(project_root: Path, conf: dict) -> None:
                 duration=duration_seconds,
                 dry_run=False,
                 project_root=project_root,
-                build_flags={"striplibs": striplibs, "architecture": "architecture", "low_spec_mode": low_spec_mode},
+                build_flags={"striplibs": striplibs, "architecture": global_arch, "low_spec_mode": low_spec_mode},
             )
 
 def init(project_root: Path, conf: dict) -> tuple:
     original_dir, patched_dir = make_paths(project_root, conf)
     check_env(project_root)
-    striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages = parse_yaml(conf)
-    return original_dir, patched_dir, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
+    striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages, global_arch = parse_yaml(conf)
+    return original_dir, patched_dir, striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages, global_arch
     
 def make_paths(project_root: Path, conf: dict) -> tuple[Path, Path]:
 
@@ -150,6 +150,7 @@ def parse_yaml(conf: dict) -> tuple:
     striplibs = conf["striplibs"]
     max_original_packages = conf.get('max_original_packages')
     max_patched_packages = conf.get('max_patched_packages')
+    global_arch = conf.get("architecture", None)
 
     detailed_app_list = {}
     repo_details = {}
@@ -188,7 +189,7 @@ def parse_yaml(conf: dict) -> tuple:
 
         detailed_app_list.setdefault(package_name, {}).update({'repos': repos, 'patch_aliases': aliase_map, 'override_arch': override_arch}) 
 
-    return striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages
+    return striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages, global_arch
 
 def check_patched_version(package_req: dict | list, patched: Path, sources: Path, force: bool, detailed_app_list: dict):
     logger.debug(f"\npackage_req:\n{package_req}\n")
@@ -243,7 +244,7 @@ def check_patched_version(package_req: dict | list, patched: Path, sources: Path
         
             logger.info(" ├── Version directory exists. Checking for apk...")
 
-            filename = f"{package_name}_{version}_patched.apk"
+            filename = f"{package_name}_{version}_{arch}_patched.apk"
             file_path = patched_version_path / filename
             if file_path.is_file():
                 
@@ -268,7 +269,7 @@ def check_patched_version(package_req: dict | list, patched: Path, sources: Path
         for pkg, needs_patching_details in needs_patching.items():
             for i, ver_details in enumerate(needs_patching_details['target_versions'].values()):
                 if i == 0:
-                    logger.info(f" └── {pkg} | {arch} | v{ver_details['version_str']} | vc: {ver_details['version_code']}")
+                    logger.info(f" └── {pkg} | {needs_patching_details['arch']} | v{ver_details['version_str']} | vc: {ver_details['version_code']}")
                 else:
                     logger.info(f"       └── Backup no. {i}: v{ver_details['version_str']} | vc: {ver_details['version_code']}")
     else:
@@ -307,7 +308,7 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
 
         if patched_package.is_file() and not force:
             logger.info(f" └── [✓] {package_name} {arch} v{target_version} is already patched.")
-            return True, attempt_details, {'repos': None, "strat": run, 'output_dest': patched_package, 'attempt': None}
+            return True, attempt_details, {'arch': arch, 'repos': None, "strat": run, 'output_dest': patched_package, 'attempt': None}
 
         patch_list, dl_reason, package = downloader.download_package_main(package_name, target_version, target_vc, arch)
 
@@ -327,11 +328,11 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
             patch_attempt += 1
             continue
 
-        result, dest, patch_reason, time = morphe.patch(package_name, target_version, repos, options_to_use, striplibs, run)
+        result, dest, patch_reason, time = morphe.patch(package_name, target_version, repos, options_to_use, striplibs, run, arch, patched_package)
         
         if result:
             winning_attempt = (patch_attempt + 1) if run == 1 else (patch_attempt - len(targets) + 1)
-            patched = {'version_name': target_version, 'repos': repos, 'strat': run, 'attempt': winning_attempt, 'options': options_to_use, 'output_dest': dest, 'results_dest': patch_reason, 'package': package, 'time': time}
+            patched = {'version_name': target_version, 'arch': arch, 'repos': repos, 'strat': run, 'attempt': winning_attempt, 'options': options_to_use, 'output_dest': dest, 'results_dest': patch_reason, 'package': package, 'time': time}
             return True, attempt_details, patched
 
         attempt_details.append({'version': target_version, 'run': run, 'stage': "Morphe Patching", 'reason': patch_reason or ("Incompatible bytecode" if run == 1 else "Fallback patch failure")})
@@ -339,7 +340,7 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
         if run == 1:
             if dest == "one_repo" and len(targets) == 1:
                 logger.warning(f"\n[✗] Only attempt failed for {package_name} when attempting all enabled patches. No other versions to try.")
-                return False, attempt_details, {'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
+                return False, attempt_details, {'arch': arch, 'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
             
             if patch_attempt < len(targets) - 1:
                 logger.info(f" └── [!] Patch failed on v{target_version} with all enabled patches attempted. Falling back to next version...")
@@ -354,7 +355,7 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
         patch_attempt += 1
 
     logger.warning(f"\n[✗] All attempts failed for {package_name} when attempting to patch.")
-    return False, attempt_details, {'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
+    return False, attempt_details, {'arch': arch, 'repos': None, "strat": None, 'output_dest': None, 'attempt': None}
 
 if __name__ == "__main__":
     project_root = Path(os.getenv("AUTOMORPH_ROOT", Path(__file__).resolve().parent.parent))
