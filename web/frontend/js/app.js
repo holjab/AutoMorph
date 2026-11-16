@@ -1436,7 +1436,7 @@ function renderConfiguredApps() {
     const isCustomArch = Boolean(app.override_arch && app.override_arch !== sysArch);
 
     const archChip = `
-      <span class="meta-chip ${isCustomArch ? 'override' : 'global'}" title="${isCustomArch ? 'Custom architecture for this package: ' + escapeHtml(appArch) : 'Inherits system architecture: ' + escapeHtml(appArch)}">
+      <span class="meta-chip global" title="${isCustomArch ? 'Custom architecture for this package: ' + escapeHtml(appArch) : 'Inherits system architecture: ' + escapeHtml(appArch)}">
         <span class="material-symbols-rounded" style="font-size: 13px;">memory</span>
         <span>${escapeHtml(appArch)}</span>
       </span>

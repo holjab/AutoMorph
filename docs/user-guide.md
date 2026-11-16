@@ -61,7 +61,12 @@ Once you navigate to your AutoMorph portal (via your [configured tunnel](tunnels
 ### 2.2 Choosing Patch Repositories
 Specify which patch repository to use for the app (e.g., ReVanced, Morphe patches, or custom community repositories). AutoMorph queries the repository releases and discovers compatible patches.
 
-### 2.3 Enabling and Disabling Apps
+### 2.3 Target Architecture (Per-App or Global)
+Each app can target a specific architecture (`arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`, or `all`):
+* **Default**: Follows the global architecture configured in the **Settings** tab.
+* **Per-App Customization**: You can change it anytime in the **Add Package Wizard** (Step 2) or by clicking **Configure App** (tune icon) on the app card.
+
+### 2.4 Enabling and Disabling Apps
 Each app card features a toggle switch:
 * **Enabled (ON)**: Included in daily scheduled patching checks.
 * **Disabled (OFF)**: Kept in your configuration but skipped during automated runs.
@@ -206,7 +211,10 @@ graph TD
 
 Access the **Settings** tab in the top navigation bar to fine-tune your environment:
 
-### 5.1 Low-Spec Mode (Recommended for Free Tier)
+### 5.1 Target Architecture
+Sets the default system architecture (`arm64-v8a` by default) used for all app downloads and builds unless customized individually on an app card.
+
+### 5.2 Low-Spec Mode (Recommended for Free Tier)
 * **What it does**: Optimizes memory allocation and builds packages sequentially with garbage collection between steps.
 * **When to enable**: Essential when hosting on an [Oracle Free Tier E2.1.Micro instance](oracle-setup.md) with 1 GB RAM to prevent out-of-memory errors.
 
