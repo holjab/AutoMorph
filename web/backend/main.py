@@ -19,8 +19,8 @@ import urllib.parse
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 from pydantic import BaseModel
 
 from . import config_manager, mutex, options_manager, update_checker
@@ -32,8 +32,17 @@ logger = logging.getLogger("automorph.api")
 
 app = FastAPI(title="AutoMorph Management API", version="2.1.0")
 
-# Enable gzip compression for responses >= 1000 bytes (e.g. 3.6MB catalog -> ~250KB)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+# Enable gzip compression for responses >= 1000 bytes (e.g. 3.6MB catalog -> ~250KB),
+# but exclude Android APKs and binary streams so they stream uncompressed with Content-Length intact.
+EXCLUDED_COMPRESSION_TYPES = DEFAULT_EXCLUDED_CONTENT_TYPES + (
+    "application/vnd.android.package-archive",
+    "application/octet-stream",
+)
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000,
+    exclude_content_types=EXCLUDED_COMPRESSION_TYPES,
+)
 
 # Allow CORS for development or external ingress
 app.add_middleware(
