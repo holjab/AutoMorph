@@ -23,13 +23,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 class Patched:
-    def __init__(self, repo_details, detailed_patch_list, base_url: str, morphe_location: Path, patched_data: dict, arch: str, enabled_patches_per_app: dict) -> None:
+    def __init__(self, repo_details, detailed_patch_list, base_url: str, morphe_location: Path, patched_data: dict, enabled_patches_per_app: dict) -> None:
         self.repo_details = repo_details
         self.detailed_patch_list = detailed_patch_list
         self.base_url = base_url
         self.morphe_location = morphe_location
         self.patched_data = patched_data
-        self.arch = arch
         self.enabled_patches_per_app = enabled_patches_per_app
 
     def make_patched_data(self, package_name: str, details: dict, morphe_catalogue: dict):
@@ -89,6 +88,7 @@ class Patched:
         patched_package_name = package_name
         patched_version_code = version_code
         patched_version_name = details['version_name']
+        arch = details['arch']
 
         catalogue_entry = (morphe_catalogue.get('store', {}) or {}).get(package_name) if morphe_catalogue else None
         if not isinstance(catalogue_entry, dict):
@@ -138,7 +138,7 @@ class Patched:
                 'source_version_name': str(details['version_name']),
                 'patched_version_code': int(patched_version_code),
                 'source_version_code': int(version_code),
-                'arch': self.arch,
+                'arch': arch,
                 'min_sdk': min_sdk,
                 'target_sdk': target_sdk,
             },
@@ -404,7 +404,7 @@ class FDroid:
 
         return index
 
-def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, morphe_location: Path, state_dir: Path, arch: str, enabled_patches_per_app: dict):
+def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, morphe_location: Path, state_dir: Path, enabled_patches_per_app: dict):
     patched_data = {}
     patched_json = state_dir / "patched.json"
     morphe_catalogue = state_dir / "morphe_catalog.json"
@@ -414,7 +414,7 @@ def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, 
             migrate_patched_json(patched_json)
         patched_data = read_json(patched_json) or {}
     
-    p = Patched(repo_details, detailed_patch_list, base_url, morphe_location, patched_data, arch, enabled_patches_per_app)
+    p = Patched(repo_details, detailed_patch_list, base_url, morphe_location, patched_data, enabled_patches_per_app)
     
     if not morphe_catalogue.is_file():
         apkpure_fetcher.get_morphe_catalog(force_refresh=True)
@@ -432,7 +432,7 @@ def main(patched: dict, repo_details: dict, detailed_patch_list, base_url: str, 
 
     write_json(p.patched_data, patched_json)
 
-def remake_patched(project_root: Path, base_url: str, architecture: str, patched_json: Path, patched_dir: Path):
+def remake_patched(project_root: Path, base_url: str, patched_json: Path, patched_dir: Path):
 
     morphe_log = project_root / "tools" / "morphe-data" / "patched-apps.json"
 
@@ -450,6 +450,7 @@ def remake_patched(project_root: Path, base_url: str, architecture: str, patched
                 continue
             pkg = rec.get("packageName")
             ver = rec.get("apkVersion")
+            arch = apk_path.stem.split('_')[-2]
             if not pkg or not ver:
                 continue
 
@@ -460,7 +461,6 @@ def remake_patched(project_root: Path, base_url: str, architecture: str, patched
             size_mb = size_bytes / (1024 * 1024)
             size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes / 1024:.2f} KB"
             
-            # Using standard time module:
             time_ms = rec.get("patchedAt") or int(apk_path.stat().st_mtime * 1000)
             time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time_ms / 1000))
             
@@ -476,7 +476,7 @@ def remake_patched(project_root: Path, base_url: str, architecture: str, patched
                     "source_version_name": str(ver),
                     "patched_version_code": int(rec.get("apkVersionCode") or 0),
                     "source_version_code": int(rec.get("apkVersionCode") or 0),
-                    "arch": architecture,
+                    "arch": arch,
                     "min_sdk": None,
                     "target_sdk": None,
                 },
@@ -507,7 +507,7 @@ def remake_patched(project_root: Path, base_url: str, architecture: str, patched
     return False
 
 
-def clean(max_original_packages: int, max_patched_packages:int, state_dir: Path, original_dir: Path, patched_dir: Path, patched_json: Path) -> None:
+def clean(max_original_packages: int, max_patched_packages:int, original_dir: Path, patched_dir: Path, patched_json: Path) -> None:
     if migrate_patched_json and patched_json.is_file():
         migrate_patched_json(patched_json)
     patched_results = read_json(patched_json)

@@ -787,6 +787,7 @@ def get_apps_list() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     seen_packages: set[str] = set()
     patched_registry = load_patched_registry()
+    global_arch = str(data.get("architecture") or "arm64-v8a").strip()
 
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -795,7 +796,7 @@ def get_apps_list() -> list[dict[str, Any]]:
     if apps_start_idx == -1:
         # Fallback to just active apps if no packages/apps section recognized
         for pkg, item in active_apps_map.items():
-            results.append(_format_app_entry(pkg, item, is_enabled=True, patched_registry=patched_registry))
+            results.append(_format_app_entry(pkg, item, is_enabled=True, patched_registry=patched_registry, global_arch=global_arch))
         return results
 
     for block in blocks:
@@ -807,7 +808,7 @@ def get_apps_list() -> list[dict[str, Any]]:
         is_enabled = not block["is_commented"]
         if is_enabled and pkg in active_apps_map:
             item = active_apps_map[pkg]
-            results.append(_format_app_entry(pkg, item, is_enabled=True, patched_registry=patched_registry))
+            results.append(_format_app_entry(pkg, item, is_enabled=True, patched_registry=patched_registry, global_arch=global_arch))
         else:
             # Parse block lines by stripping comment markers
             block_lines = lines[block["start"]:block["end"]]
@@ -825,7 +826,7 @@ def get_apps_list() -> list[dict[str, Any]]:
             except Exception:
                 item = {"package_name": pkg}
 
-            results.append(_format_app_entry(pkg, item, is_enabled=is_enabled, patched_registry=patched_registry))
+            results.append(_format_app_entry(pkg, item, is_enabled=is_enabled, patched_registry=patched_registry, global_arch=global_arch))
 
     return results
 
@@ -835,6 +836,7 @@ def _format_app_entry(
     item: dict[str, Any],
     is_enabled: bool,
     patched_registry: dict[str, Any] | None = None,
+    global_arch: str = "arm64-v8a",
 ) -> dict[str, Any]:
     repos = item.get("repos") or []
     if isinstance(repos, str):
@@ -842,6 +844,8 @@ def _format_app_entry(
     repos = [r.strip() for r in repos if isinstance(r, str) and r.strip()]
 
     aliases = item.get("patch_aliases") or []
+    raw_override = item.get("override_arch") or item.get("arch") or None
+    override_arch = str(raw_override).strip() if raw_override else None
 
     return {
         "package": pkg,
@@ -849,6 +853,8 @@ def _format_app_entry(
         "repos": list(repos),
         "patch_aliases": list(aliases) if isinstance(aliases, list) else [],
         "enabled": is_enabled,
+        "override_arch": override_arch,
+        "architecture": override_arch or global_arch,
         "last_result": get_last_patch_result(pkg, patched_registry=patched_registry),
     }
 
@@ -950,8 +956,21 @@ def add_or_update_app(app_data: dict[str, Any]) -> dict[str, Any]:
 
     patch_aliases = app_data.get("patch_aliases") or []
 
+    # Determine architecture override
+    raw_arch = app_data.get("override_arch") or app_data.get("architecture")
+    selected_arch = str(raw_arch).strip() if raw_arch else None
+
+    # Load global architecture to know if selected_arch differs
+    try:
+        _, data = load_config_raw()
+        global_arch = str(data.get("architecture") or "arm64-v8a").strip()
+    except Exception:
+        global_arch = "arm64-v8a"
+
     # Format the new app YAML block
     new_block_lines = [f"  - package_name: {package}\n"]
+    if selected_arch and selected_arch.lower() not in ("", "default", "none", "null") and selected_arch != global_arch:
+        new_block_lines.append(f"    override_arch: {selected_arch}\n")
     if repos:
         new_block_lines.append("    repos:\n")
         for r in repos:

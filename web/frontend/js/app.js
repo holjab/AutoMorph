@@ -349,6 +349,35 @@ function setupEventListeners() {
     }
   });
 
+  // Architecture Selection Change Listeners
+  document.getElementById('wiz-app-arch')?.addEventListener('change', (e) => {
+    const badge = document.getElementById('wiz-arch-badge');
+    const sysArch = state.systemArch || 'arm64-v8a';
+    if (badge) {
+      if (e.target.value === sysArch) {
+        badge.className = 'badge';
+        badge.textContent = 'System Default';
+      } else {
+        badge.className = 'badge badge-info';
+        badge.textContent = 'Custom';
+      }
+    }
+  });
+
+  document.getElementById('edit-app-arch')?.addEventListener('change', (e) => {
+    const badge = document.getElementById('edit-arch-badge');
+    const sysArch = state.systemArch || 'arm64-v8a';
+    if (badge) {
+      if (e.target.value === sysArch) {
+        badge.className = 'badge';
+        badge.textContent = 'System Default';
+      } else {
+        badge.className = 'badge badge-info';
+        badge.textContent = 'Custom';
+      }
+    }
+  });
+
   // Wizard Step 4: Add Alias Mapping
   document.getElementById('btn-wiz-add-alias')?.addEventListener('click', () => {
     addAliasRow();
@@ -681,6 +710,7 @@ async function loadConfig() {
     if (!res.ok) throw new Error('Config load failed');
     const data = await res.json();
     state.config = data;
+    state.systemArch = data.architecture || data.system?.architecture || state.systemArch || 'arm64-v8a';
     const packages = data.packages || data.apps || [];
     state.configuredApps = packages;
 
@@ -1401,6 +1431,17 @@ function renderConfiguredApps() {
       ? `<span class="meta-chip alias" title="Configured patch aliases"><span class="material-symbols-rounded" style="font-size: 13px;">alt_route</span> ${aliases.length} Aliases</span>`
       : '';
 
+    const sysArch = state.systemArch || 'arm64-v8a';
+    const appArch = app.override_arch || app.architecture || sysArch;
+    const isCustomArch = Boolean(app.override_arch && app.override_arch !== sysArch);
+
+    const archChip = `
+      <span class="meta-chip global" title="${isCustomArch ? 'Custom architecture for this package: ' + escapeHtml(appArch) : 'Inherits system architecture: ' + escapeHtml(appArch)}">
+        <span class="material-symbols-rounded" style="font-size: 13px;">memory</span>
+        <span>${escapeHtml(appArch)}</span>
+      </span>
+    `;
+
     // 2. Status Row & Drawer Content
     let statusRowHtml = '';
     let drawerHtml = '';
@@ -1622,6 +1663,7 @@ function renderConfiguredApps() {
         <div class="app-meta-tags">
           ${repoSummaryChip}
           ${aliasChip}
+          ${archChip}
         </div>
 
         <div class="app-card-footer">
@@ -1908,7 +1950,10 @@ function renderSettings(settings) {
 
   // 1. System & Build Configuration
   const selArch = document.getElementById('setting-arch');
-  if (selArch && sys.architecture) selArch.value = sys.architecture;
+  if (selArch && sys.architecture) {
+    selArch.value = sys.architecture;
+    state.systemArch = sys.architecture;
+  }
 
   const inpTz = document.getElementById('setting-timezone');
   if (inpTz && sys.timezone !== undefined) inpTz.value = sys.timezone || 'UTC';
@@ -2913,6 +2958,15 @@ function openAddPackageWizard() {
   const aliasesList = document.getElementById('wiz-aliases-list');
   if (aliasesList) aliasesList.innerHTML = '';
 
+  const wizArchSel = document.getElementById('wiz-app-arch');
+  const wizArchBadge = document.getElementById('wiz-arch-badge');
+  const sysArch = state.systemArch || 'arm64-v8a';
+  if (wizArchSel) wizArchSel.value = sysArch;
+  if (wizArchBadge) {
+    wizArchBadge.className = 'badge';
+    wizArchBadge.textContent = 'System Default';
+  }
+
   updateWizardStepView(1);
   document.getElementById('modal-wizard')?.classList.add('open');
   searchCatalog(''); // Initial empty search
@@ -3660,8 +3714,14 @@ function addAliasRow(aliasItem = null) {
 function generateYamlPreview() {
   const pkg = state.wizard.selectedPackage;
   const repos = Array.from(state.wizard.repos);
+  const sysArch = state.systemArch || 'arm64-v8a';
+  const selectedArch = document.getElementById('wiz-app-arch')?.value || sysArch;
 
   let yaml = `  - package_name: ${pkg}\n`;
+
+  if (selectedArch && selectedArch !== sysArch) {
+    yaml += `    override_arch: ${selectedArch}\n`;
+  }
 
   if (repos.length > 0) {
     yaml += `    repos:\n`;
@@ -3702,11 +3762,14 @@ async function wizardSubmitApp() {
   const pkg = state.wizard.selectedPackage;
   const repos = Array.from(state.wizard.repos);
   const aliases = collectAliasData(true);
+  const sysArch = state.systemArch || 'arm64-v8a';
+  const selectedArch = document.getElementById('wiz-app-arch')?.value || sysArch;
 
   const payload = {
     package: pkg,
     repos: repos,
     patch_aliases: aliases,
+    override_arch: selectedArch,
   };
 
   const btnSave = document.getElementById('btn-wiz-save');
@@ -4901,6 +4964,23 @@ async function openEditAppModal(pkg) {
   const appRepos = app.repos || [];
   const activeReposSet = new Set(appRepos);
 
+  const sysArch = state.systemArch || 'arm64-v8a';
+  const currentArch = app.override_arch || app.architecture || sysArch;
+  const isCustomArch = Boolean(app.override_arch && app.override_arch !== sysArch);
+
+  const editArchSel = document.getElementById('edit-app-arch');
+  const editArchBadge = document.getElementById('edit-arch-badge');
+  if (editArchSel) editArchSel.value = currentArch;
+  if (editArchBadge) {
+    if (isCustomArch) {
+      editArchBadge.className = 'badge badge-info';
+      editArchBadge.textContent = 'Custom';
+    } else {
+      editArchBadge.className = 'badge';
+      editArchBadge.textContent = 'System Default';
+    }
+  }
+
   state.editApp = {
     package: pkg,
     appName: friendlyName,
@@ -4909,6 +4989,7 @@ async function openEditAppModal(pkg) {
     initialRepos: new Set(appRepos),
     initialAliases: JSON.stringify(app.patch_aliases || []),
     aliases: JSON.parse(JSON.stringify(app.patch_aliases || [])),
+    initialArch: currentArch,
     activeTab: 'repos',
     repoPatches: {},
     selectedRepoOwner: 'all',
@@ -5458,23 +5539,28 @@ async function saveEditAppModal() {
       if (optRes.ok) savedOptionsCount++;
     }
 
-    // 2. Only update config.yaml if Repositories or Aliases were modified
+    // 2. Only update config.yaml if Repositories, Aliases, or Architecture were modified
     const aliases = collectAliasData(false);
     const finalRepos = Array.from(state.editApp.repos || []);
     const initialRepos = Array.from(state.editApp.initialRepos || []);
     const initialAliasesStr = state.editApp.initialAliases || '[]';
     const currentAliasesStr = JSON.stringify(aliases);
 
+    const sysArch = state.systemArch || 'arm64-v8a';
+    const selectedArch = document.getElementById('edit-app-arch')?.value || state.editApp.initialArch || sysArch;
+    const archChanged = selectedArch !== (state.editApp.initialArch || sysArch);
+
     const reposChanged = finalRepos.length !== initialRepos.length ||
       !finalRepos.every(r => initialRepos.includes(r));
     const aliasesChanged = currentAliasesStr !== initialAliasesStr;
 
     let configUpdated = false;
-    if (reposChanged || aliasesChanged) {
+    if (reposChanged || aliasesChanged || archChanged) {
       const payload = {
         package: pkg,
         repos: finalRepos,
         patch_aliases: aliases,
+        override_arch: selectedArch,
       };
 
       const cfgRes = await fetch('/api/config/app', {
