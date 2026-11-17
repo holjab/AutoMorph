@@ -700,7 +700,7 @@ def main(
             if isinstance(obj, Path):
                 return str(obj)
             if isinstance(obj, dict):
-                return {k: _clean_for_json(v) for k, v in obj.items()}
+                return {str(k): _clean_for_json(v) for k, v in obj.items()}
             if isinstance(obj, (list, tuple, set)):
                 return [_clean_for_json(x) for x in obj]
             return obj

@@ -204,6 +204,22 @@ class PipelineRunner:
 
             # Record final status
             final_status = "success" if returncode == 0 else "failed"
+            if returncode == 0:
+                last_report_file = LOGS_DIR / "last_run_report.json"
+                if last_report_file.is_file():
+                    try:
+                        rep_data = json.loads(last_report_file.read_text(encoding="utf-8"))
+                        if rep_data.get("timestamp", 0) >= self.start_time - 10:
+                            failures = rep_data.get("failures") or {}
+                            successes = rep_data.get("success") or {}
+                            if package:
+                                if package in failures or (failures and package not in successes):
+                                    final_status = "failed"
+                            elif failures:
+                                final_status = "failed"
+                    except Exception as e:
+                        logger.debug(f"Could not check last_run_report.json for status: {e}")
+
             summary = {
                 "run_id": run_id,
                 "status": final_status,
@@ -215,7 +231,10 @@ class PipelineRunner:
                 "package": package,
             }
 
-            completion_line = f"\n[✓] Run completed in {duration_formatted} (Code: {returncode})"
+            if final_status == "failed" and returncode == 0:
+                completion_line = f"\n[!] Run completed with failures in {duration_formatted} (Code: {returncode})"
+            else:
+                completion_line = f"\n[✓] Run completed in {duration_formatted} (Code: {returncode})"
             captured_lines.append(completion_line)
 
             try:

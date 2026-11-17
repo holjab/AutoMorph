@@ -73,7 +73,9 @@ def main(project_root: Path, conf: dict) -> None:
                 
             if not result:
                 logger.warning(f"[✗] Skipping {package_name}: patching could not be completed.")      
-                patch_failures[package_name] = {'target_versions': details.get('target_versions', []), 'arch': details.get('arch', None), 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'attempts': attempt_details}
+                raw_targets = details.get('target_versions', {})
+                target_version_list = [v['version_str'] for v in raw_targets.values()] if isinstance(raw_targets, dict) else list(raw_targets)
+                patch_failures[package_name] = {'target_versions': target_version_list, 'arch': details.get('arch', None), 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'attempts': attempt_details}
                 continue       
 
             patch_success[package_name] = {'dest': patched_details['output_dest'], 'arch': details.get('arch', None), 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': patched_details['strat'], 'attempt': patched_details['attempt'], 'attempts': attempt_details}

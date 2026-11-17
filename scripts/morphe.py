@@ -828,7 +828,7 @@ class Morphe:
 
             logger.error(f" └── [!] Morphe CLI failed (exit code {e.returncode}): {error_msg}")
             if stderr_raw and stderr_raw != error_msg:
-                logger.error(f"Morphe CLI stderr:\n{stderr_raw}")
+                logger.debug(f"Morphe CLI stderr:\n{stderr_raw}")
             if stdout_raw:
                 logger.debug(f"Morphe CLI stdout:\n{stdout_raw}")
 
