@@ -54,13 +54,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Pushes to 'main' or stable releases get tagged :latest
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && !contains(github.ref_name, 'dev') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'rc')) }}
-            # Pushes to 'dev' or dev pre-releases get tagged :dev
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' || (github.ref_type == 'tag' && (contains(github.ref_name, 'dev') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc'))) }}
-            # Git releases get tagged with their version numbers (e.g., :v1.0.0, :1.0)
+            # Only direct pushes to 'main' update :latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # Only direct pushes to 'dev' update :dev
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+            # Git releases get tagged with their version numbers (e.g., :0.2.4, :0.2.4-beta-2)
             type=semver,pattern={{version}}
-            # Every push gets a unique commit SHA tag (e.g., :sha-7f3b1a2)
+            # Every push gets a unique commit SHA tag (e.g., :sha-54b3e4f)
             type=sha,prefix=sha-
 
       - name: Write version code
