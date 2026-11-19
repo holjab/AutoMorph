@@ -7,10 +7,6 @@
     - [x] Need to add protoc sudo apt install protobuf-compiler / json for obtanium
     - [x] Look into using pyaxmlparser instead of aapt
 
-- [ ] only write options checksum on succesfull patch - or make a json of sucessfully patched apps and it can read from that instead
-    - [x] patched.json
-    - [ ] check patched.json
-
 - [ ] App search issues
     - [x] Chess.com - has-googleplay
     - [x] Accuweather - has -rc
@@ -19,6 +15,10 @@
     - [ ] Instagram 3 variants  384510792 | 384510800 | 384510833 | chose 792
 
 - [ ] Needs to check if a patched verison actually exists before exiting with no patches applied
+
+- [ ] Add option to remove patch from version search
+    - [ ] Edit filter reops to read from config to see if a patch should be ignored
+    - [ ] get_patch_versions_main will read this flag to determine if it should be returned as a version or not 
 
 ## Enhancements
 - [ ] Add support for unreleased patches
@@ -62,6 +62,10 @@
 - [x] Console doesn't stop on web
 
 - [x] Time is wrong on web and logs
+
+- [x] only write options checksum on succesfull patch - or make a json of sucessfully patched apps and it can read from that instead
+    - [x] patched.json
+    - [x] check patched.json
 
 ## Past Enhancements
 - [x] Make a soure YAML for apps that are not on any of the app stores

@@ -95,36 +95,38 @@ class Morphe:
         for repo in self.repo_details:
             owner = self.repo_details[repo]['owner']
             repo_name = self.repo_details[repo]['repo_name']
-            repo_type = self.repo_details[repo]['repo_type']
-            repo_options = self.repo_details[repo]['repo_options']
 
             if not owner or not repo_name:
                 logger.error(f"Unable to find owner or repo of {repo}")
                 return None
 
-            self.make_api_urls(self.repo_details[repo], token)
-            continue 
-            try:
-                response = requests.get(api_url, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    repo_version[repo] = re.findall(r"\d+", response.json().get("tag_name"))
-                    # repo_version[repo] = tuple(int(n) for n in re.findall(r"\d+", response.json().get("tag_name")))
+            self.make_api_urls(repo, token)
 
-                elif response.status_code == 404:
-                    logger.warning(" └── [!] 404 error")
-                response.raise_for_status()
+            for api_url in self.repo_details[repo]['api_urls']:
+                try:
+                    headers = self.repo_details[repo]['headers']
+                    response = requests.get(api_url, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        if "latest" in api_url:
+                            repo_version.setdefault(repo, {})['latest'] = re.findall(r"\d+", response.json().get("tag_name", ""))
 
-            except requests.exceptions.RequestException as e:
-                logger.error(f" └── [!] Failed checking release for {owner}/{repo}: {e}")
+                        else:
+                            repo_version.setdefault(repo, {})['pre-release'] = re.findall(r"\d+", js[0].get("tag_name", "")) if (js := response.json()) else []
+
+                    elif response.status_code == 404:
+                        logger.warning(" └── [!] 404 error")
+                    response.raise_for_status()
+
+                except requests.exceptions.RequestException as e:
+                    logger.error(f" └── [!] Failed checking release for {owner}/{repo}: {e}")
 
         return repo_version
 
-    def make_api_urls(self, repo_details: dict, token: str):
-        owner = repo_details['owner']
-        repo_name = repo_details['repo_name']
-        repo_type = repo_details['repo_type']
-        repo_options = repo_details['repo_options']
-        api_urls = set()
+    def make_api_urls(self, repo: dict, token: str):
+        owner = self.repo_details[repo]['owner']
+        repo_name = self.repo_details[repo]['repo_name']
+        repo_type = self.repo_details[repo]['repo_type']
+        repo_options = self.repo_details[repo]['repo_options']
 
         if repo_type == 'github' or repo_type == 'gitlab':
             headers = {
@@ -138,34 +140,41 @@ class Morphe:
         if len(repo_options) == 1:
             if 'latest' in repo_options:
                 if repo_type == 'github':
-                    api_url = f"https://api.github.com/repos/{owner}/{repo_name}/releases/latest"      
-
+                    api_urls = [f"https://api.github.com/repos/{owner}/{repo_name}/releases/latest"]
                     if token:
                         headers["Authorization"] = f"Bearer {token}"
 
-                elif repo_type == 'gitlab':
+                else:
                     project_path = urllib.parse.quote(f"{owner}/{repo_name}", safe="")
-                    api_url = f"https://gitlab.com/api/v4/projects/{project_path}/releases/permalink/latest"
+                    api_urls = [f"https://gitlab.com/api/v4/projects/{project_path}/releases/permalink/latest"]
             
             elif 'pre-release' in repo_options:
                 if repo_type == 'github':
-                    api_url = f"https://api.github.com/repos/{owner}/{repo_name}/releases"      
-
+                    api_urls = [f"https://api.github.com/repos/{owner}/{repo_name}/releases"]
                     if token:
                         headers["Authorization"] = f"Bearer {token}"
 
-                elif repo_type == 'gitlab':
+                else:
                     project_path = urllib.parse.quote(f"{owner}/{repo_name}", safe="")
-                    api_url = f"https://gitlab.com/api/v4/projects/{project_path}/releases/permalink"
-
-
-
-            api_urls.add(api_url)
-            repo_details.update({'api_urls': api_urls, 'headers': headers})
-
-
+                    api_urls = [f"https://gitlab.com/api/v4/projects/{project_path}/releases"]
         
+        else:
+            if repo_type == 'github':
+                api_urls = [
+                    f"https://api.github.com/repos/{owner}/{repo_name}/releases/latest",
+                    f"https://api.github.com/repos/{owner}/{repo_name}/releases"
+                ]
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
 
+            else:
+                project_path = urllib.parse.quote(f"{owner}/{repo_name}", safe="")
+                api_urls = [
+                    f"https://gitlab.com/api/v4/projects/{project_path}/releases/permalink/latest",
+                    f"https://gitlab.com/api/v4/projects/{project_path}/releases"
+                ]
+
+        self.repo_details[repo].update({'api_urls': api_urls, 'headers': headers})
 
     def check_repo_update(self, new_repo_versions: dict[str, list[str]]) -> dict[str, set[str]]:
         repo_search = {} 
@@ -173,28 +182,33 @@ class Morphe:
         if self.repo_versions_json.is_file():
             logger.info("[*] Checking for repo updates...")
             with open(self.repo_versions_json, "r", encoding="utf-8") as f:
-                cached_data = json.load(f)
+                cached_data = {k: v if isinstance(v, dict) else {'latest': v} for k, v in json.load(f).items()}
                 for repo in self.repo_details:
                     owner = self.repo_details[repo]['owner']
                     if repo not in cached_data:
                         logger.info(f" └── [!] {owner} repo is new. Will add to updated repos list")
-                        repo_search[repo] = self.check_repo(repo)    
+                        repo_search.setdefault(repo, {}).update(self.check_repo("new", repo))
                     elif repo not in new_repo_versions:
                         logger.warning(f" └── [✗] {owner} repo missing from parsed versions. Skipping.")
                     else:
-                        cached_version = tuple(int(n) for n in cached_data[repo])
-                        new_version = tuple(int(n) for n in new_repo_versions[repo])
+                        latest_cached_version = tuple(int(n) for n in cached_data[repo].get('latest', ""))
+                        pre_release_cached_version = tuple(int(n) for n in cached_data[repo].get('pre-release', ""))
+                        latest_new_version = tuple(int(n) for n in new_repo_versions[repo].get('latest', []))
+                        pre_release_new_version = tuple(int(n) for n in new_repo_versions[repo].get('pre-release', []))
 
-                        if new_version > cached_version:
-                            logger.info(f" └── [!] New repo version for {owner} repo. Will add to updated repos list.")
-                            repo_search[repo] = self.check_repo(repo)
-                        else:
-                            logger.info(f" └── [✓] Latest version of {owner} already used.") 
+                        if latest_new_version and latest_new_version > latest_cached_version:
+                            logger.info(f" └── [!] New repo version for {owner} repo - latest branch. Will add to updated repos list.")
+                            repo_search.setdefault(repo, {}).update(self.check_repo("latest", repo))
+                        if pre_release_new_version and pre_release_new_version > pre_release_cached_version:
+                            logger.info(f" └── [!] New repo version for {owner} repo - pre-release branch. Will add to updated repos list.")
+                            repo_search.setdefault(repo, {}).update(self.check_repo("pre-release", repo))
+                        if repo not in repo_search:
+                            logger.info(f" └── [✓] Latest versions of {owner} already used.")
       
         else:
             logger.info(f"[*] No repo_versions.json found. Adding all repos to updated repos list...")
             for repo in self.repo_details:
-                repo_search[repo] = self.check_repo(repo)
+                repo_search.setdefault(repo, {}).update(self.check_repo("new", repo))
 
         return repo_search
 
@@ -337,16 +351,23 @@ class Morphe:
         except OSError as e:
             logger.error(f" └── [!] Failed to write {self.repo_versions_json.name}: {e}")
 
-    def check_repo(self, repo: str | None = None) -> set[str]:
-        app_set = set()
+    def check_repo(self, channel: str, repo: str | None = None) -> set[str]:
+        apps = {'latest': set(), 'pre-release': set()}
 
-        helper = {package_name: details['repos'] for package_name, details in self.detailed_patch_list.items()}
+        for package_name, details in self.detailed_patch_list.items():
+            if repo in details['repos']:
+                pre_release = details['pre-release']
+                if channel == "latest" and not pre_release:
+                    apps['latest'].add(package_name)
+                elif channel == 'pre-release' and pre_release:
+                    apps['pre-release'].add(package_name)
+                elif channel == "new":
+                    if not pre_release:
+                        apps['latest'].add(package_name)
+                    else:
+                        apps['pre-release'].add(package_name)
 
-        for package, repos in helper.items():
-            if repo in repos:
-                app_set.add(package)
-
-        return app_set
+        return {ch: ap for ch, ap in apps.items() if ap}
 
     def get_cached_repo_path(self, owner: str, repo_name: str, repo: str) -> Path | None:
         mpp_path = self.repo_details.get(repo, {}).get("cached_repo", {}).get("cached_mpp_path")
