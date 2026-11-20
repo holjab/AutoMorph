@@ -193,10 +193,11 @@ def parse_yaml(conf: dict) -> tuple:
                 'owner': owner,
                 'repo_name': repo_name,
                 'repo_type': repo_type,
-                'repo_options': set()
+                'repo_options': {}
             })
 
-            repo_details[repo]['repo_options'].add('pre-release' if pre_release else 'latest')
+            key = 'pre-release' if pre_release else 'latest'
+            repo_details[repo].setdefault('repo_options', {}).setdefault(key, [])
 
         detailed_app_list.setdefault(package_name, {}).update({'repos': repos, 'patch_aliases': aliase_map, 'pre-release': pre_release, 'override_arch': override_arch}) 
 

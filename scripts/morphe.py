@@ -35,7 +35,7 @@ class Morphe:
         self.repo_search: dict[str, set[str]] = {}
         self.enabled_patches_per_app: dict[str, dict[str, dict[str, str]]]
 
-    def get_cached_repo(self, repo: str) -> Path | None:
+    def get_cached_repo(self, repo: str, channel: str) -> Path | None:
         owner = self.repo_details[repo]['owner']
         repo_name = self.repo_details[repo]['repo_name']
         cached_repo_dir = self.project_root / "tools" / "morphe-data" / "patches" / f"{owner}-{repo_name}"
@@ -44,9 +44,9 @@ class Morphe:
             logger.error(f"\n[!] Skipping options for '{owner}/{repo_name}': cache directory does not exist.")
             return None
 
-        cached_repo = next(cached_repo_dir.iterdir(), None)
-        
-        return cached_repo
+        for cached_repo in cached_repo_dir.glob("*.mpp"):
+            if channel in cached_repo.name:
+                return cached_repo
 
 #################################
 #             MAIN              #
@@ -72,21 +72,17 @@ class Morphe:
 #################################
 
     def scan_updates(self) -> dict[str, set[str]]:
-        self.check_pre_release()
         new_repo_versions = self.find_repo_version()
         updated_repos = self.check_repo_update(new_repo_versions)
 
         if updated_repos:
             self.build_repo_cache(updated_repos)  
-            self.write_repo_versions_json(new_repo_versions)
+            # self.write_repo_versions_json(new_repo_versions)
 
-        if all(repo in updated_repos for repo in self.repo_details):
-            return updated_repos
+        # if all(repo in updated_repos for repo in self.repo_details):
+        #     return updated_repos
         
         return self.check_options_change(updated_repos)
-
-    def check_pre_release(self):
-        pass
 
     def find_repo_version(self) -> dict[str, list[str]] | None:
         repo_version = {}
@@ -108,10 +104,14 @@ class Morphe:
                     response = requests.get(api_url, headers=headers, timeout=10)
                     if response.status_code == 200:
                         if "latest" in api_url:
-                            repo_version.setdefault(repo, {})['latest'] = re.findall(r"\d+", response.json().get("tag_name", ""))
+                            version = re.findall(r"\d+", response.json().get("tag_name", ""))
+                            repo_version.setdefault(repo, {})['latest'] = version
+                            self.repo_details[repo]['repo_options']['latest'] = version
 
                         else:
-                            repo_version.setdefault(repo, {})['pre-release'] = re.findall(r"\d+", js[0].get("tag_name", "")) if (js := response.json()) else []
+                            version = re.findall(r"\d+", js[0].get("tag_name", "")) if (js := response.json()) else []
+                            repo_version.setdefault(repo, {})['pre-release'] = version
+                            self.repo_details[repo]['repo_options']['pre-release'] = version
 
                     elif response.status_code == 404:
                         logger.warning(" └── [!] 404 error")
@@ -217,63 +217,82 @@ class Morphe:
             owner = self.repo_details[repo]['owner']
             repo_name = self.repo_details[repo]['repo_name']
             repo_type = self.repo_details[repo]['repo_type']
-            api_url = self.repo_details[repo]['api_url']
+            api_urls = self.repo_details[repo]['api_urls']
             headers = self.repo_details[repo]['headers']
+            pre_release = False
 
-            try:
-                res = (requests.get(api_url, headers=headers, timeout=15))
-                res.raise_for_status()
-                response = res.json()
-            except requests.exceptions.RequestException as e:
-                status = getattr(getattr(e, "response", None), "status_code", None)
-                if status == 404:
-                    logger.error(f" └── [!] Repo or release not found (404) for '{owner}/{repo_name}'. Skipping...")
-                else:
-                    logger.error(f" └── [!] Failed checking release for '{owner}/{repo_name}': {e}")
-                continue
+            for api_url in api_urls:
+                if "latest" not in api_url:
+                    pre_release = True
 
-            if repo_type == 'github':
-                asset_list = response.get("assets", [])
-            elif repo_type == 'gitlab':
-                asset_list = response.get("assets", {}).get("links", [])
+                try:
+                    res = (requests.get(api_url, headers=headers, timeout=15))
+                    res.raise_for_status()
+                    response = res.json()
+                except requests.exceptions.RequestException as e:
+                    status = getattr(getattr(e, "response", None), "status_code", None)
+                    if status == 404:
+                        logger.error(f" └── [!] Repo or release not found (404) for '{owner}/{repo_name}'. Skipping...")
+                    else:
+                        logger.error(f" └── [!] Failed checking release for '{owner}/{repo_name}': {e}")
+                    continue
 
-            mpp_asset = next((a for a in asset_list if a.get("name", "").endswith(".mpp")), None)
-
-            if mpp_asset:
                 if repo_type == 'github':
-                    download_url = mpp_asset["browser_download_url"]
+                    if pre_release == True:
+                        asset_list = response[0].get("assets", []) if response else []
+                        tag_name = response[0].get("tag_name", "") if response else ""
+                    else:   
+                        asset_list = response.get("assets", []) if response else []
+                        tag_name = response.get("tag_name", "") if response else ""
                 elif repo_type == 'gitlab':
-                    download_url = mpp_asset["direct_asset_url"]
-                file_name = mpp_asset["name"]
-            else:
-                logger.error("No .mpp asset found in release.")
-                continue    
+                    asset_list = response.get("assets", {}).get("links", [])
 
-            tag_name = response.get('tag_name', "")
-            dest = self.project_root / "tools" / "morphe-data" / "patches" / f"{owner}-{repo_name}" / f"{tag_name}__{file_name}"
-            dest.parent.mkdir(parents=True, exist_ok=True)
+                mpp_asset = next((a for a in asset_list if a.get("name", "").endswith(".mpp")), None)
 
-            for item in dest.parent.iterdir():
-                if item.is_file():
-                    item.unlink(missing_ok=True)
+                if mpp_asset:
+                    if repo_type == 'github':
+                        download_url = mpp_asset["browser_download_url"]
+                    elif repo_type == 'gitlab':
+                        download_url = mpp_asset["direct_asset_url"]
+                    file_name = mpp_asset["name"]
+                else:
+                    logger.error("No .mpp asset found in release.")
+                    continue    
 
-            dl_headers = {"User-Agent": "MorpheDownloader"}
-            try:
-                with requests.get(download_url, headers=dl_headers, stream=True, timeout=60) as r:
-                    r.raise_for_status()
-                    tmp_path = dest.with_suffix(".tmp")
-                    with open(tmp_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=128 * 1024):
-                            if chunk:
-                                f.write(chunk)
-                    tmp_path.replace(dest)
-                    logger.info(f" └── [✓] Download complete for '{owner}': {dest.name}")
-                    self.repo_details[repo]['cached_repo'] = {'cached_mpp_path': dest}
-            except requests.exceptions.RequestException as e:
-                logger.error(f" └── [!] Download failed for '{file_name}': {e}")
-                if "tmp_path" in locals() and tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
-                continue
+                if pre_release:
+                    ver = self.repo_details[repo]['repo_options']['pre-release']
+                    id = ".".join(ver)
+                    dest = self.project_root / "tools" / "morphe-data" / "patches" / f"{owner}-{repo_name}" / f"{id}_pre-release_{file_name}"
+                else:
+                    ver = self.repo_details[repo]['repo_options']['latest']
+                    id = ".".join(ver)
+                    dest = self.project_root / "tools" / "morphe-data" / "patches" / f"{owner}-{repo_name}" / f"{id}_latest_{file_name}"
+
+                dest.parent.mkdir(parents=True, exist_ok=True)
+
+                for item in dest.parent.iterdir():
+                    if item.is_file():
+                        item_id = item.name.split("_")[0]
+                        if item_id.split(".") not in self.repo_details[repo]['repo_options'].values():
+                            item.unlink(missing_ok=True)
+
+                dl_headers = {"User-Agent": "MorpheDownloader"}
+                try:
+                    with requests.get(download_url, headers=dl_headers, stream=True, timeout=60) as r:
+                        r.raise_for_status()
+                        tmp_path = dest.with_suffix(".tmp")
+                        with open(tmp_path, "wb") as f:
+                            for chunk in r.iter_content(chunk_size=128 * 1024):
+                                if chunk:
+                                    f.write(chunk)
+                        tmp_path.replace(dest)
+                        logger.info(f" └── [✓] Download complete for '{owner}': {dest.name}")
+                        self.repo_details[repo]['cached_repo'] = {'cached_mpp_path': dest}
+                except requests.exceptions.RequestException as e:
+                    logger.error(f" └── [!] Download failed for '{file_name}': {e}")
+                    if "tmp_path" in locals() and tmp_path.exists():
+                        tmp_path.unlink(missing_ok=True)
+                    continue
 
     def check_options_change(self, updated_repos: dict[str, set[str]]) -> dict[str, set[str]]:
         logger.info(f"\n[*] Checking for updates to options files...")
@@ -282,10 +301,13 @@ class Morphe:
         for app, details in self.detailed_patch_list.items():
             app_options_dir = self.options_dir / app
             expected_repos = details.get('repos', [])
+            channel = "latest"
+            if details['pre-release']:
+                channel = "pre-release"
 
             for repo in expected_repos:
                 if repo in self.repo_details:
-                    expected_options = app_options_dir / f"{self.repo_details[repo]['owner']}_options.json"
+                    expected_options = app_options_dir / f"{self.repo_details[repo]['owner']}_options_{channel}.json"
                     if not expected_options.is_file():
                         updated_repos.setdefault(repo, set()).add(app)
             
@@ -402,49 +424,48 @@ class Morphe:
         repo_options_locations = []
 
         for repo in self.repo_search:     
-            cached_repo = self.get_cached_repo(repo)  
+            for channel, packages in self.repo_search[repo].items():
+                cached_repo = self.get_cached_repo(repo, channel)
+                if not cached_repo:
+                    continue
 
-            if not cached_repo:
-                continue
+                logger.info(f"\n[*] Creating options json(s) from cached repo: '{cached_repo.parent.name}/{cached_repo.name}'")  
+                owner = self.repo_details[repo]['owner']
 
-            owner = self.repo_details[repo]['owner']
+                for package_name in packages:
+                    app_options_dir = self.options_dir / package_name
+                    app_options_dir.mkdir(parents=True, exist_ok=True)
+                    repo_options = app_options_dir / f"{owner}_options_{channel}.json" 
 
-            logger.info(f"\n[*] Creating options json(s) from cached repo: '{cached_repo.parent.name}/{cached_repo.name}'")  
+                    result = subprocess.run(
+                        [
+                            "java",
+                            "-jar",
+                            str(self.morphe_location),
+                            "options-create",
+                            "-p",
+                            cached_repo,
+                            "-o",
+                            str(repo_options),
+                            "-f",
+                            package_name,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    
+                    if result.returncode in (130, 143, -2, -15, -9) or result.returncode < 0:
+                        logger.critical("\n └── [!] Options creation cancelled by user.")
+                        raise KeyboardInterrupt("Cancelled by user")
 
-            for package_name in self.repo_search[repo]:
-                app_options_dir = self.options_dir / package_name
-                app_options_dir.mkdir(parents=True, exist_ok=True)
-                repo_options = app_options_dir / f"{owner}_options.json" 
-
-                result = subprocess.run(
-                    [
-                        "java",
-                        "-jar",
-                        str(self.morphe_location),
-                        "options-create",
-                        "-p",
-                        cached_repo,
-                        "-o",
-                        str(repo_options),
-                        "-f",
-                        package_name,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                
-                if result.returncode in (130, 143, -2, -15, -9) or result.returncode < 0:
-                    logger.critical("\n └── [!] Options creation cancelled by user.")
-                    raise KeyboardInterrupt("Cancelled by user")
-
-                if result.returncode == 0:
-                    logger.info(f" └── [✓] Created options file: '{repo_options.name}' for '{package_name}'.")
-                    repo_options_locations.append(repo_options)
-                else:
-                    logger.error(f" └── [✗] Failed to create options for '{package_name}' from '{repo}'.")
-                    if result.stderr and result.stderr.strip():
-                        logger.error(result.stderr.strip())
+                    if result.returncode == 0:
+                        logger.info(f" └── [✓] Created options file: '{repo_options.name}' for '{package_name}'.")
+                        repo_options_locations.append(repo_options)
+                    else:
+                        logger.error(f" └── [✗] Failed to create options for '{package_name}' from '{repo}'.")
+                        if result.stderr and result.stderr.strip():
+                            logger.error(result.stderr.strip())
 
         return repo_options_locations
 
@@ -496,7 +517,6 @@ class Morphe:
                 with open(options_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
-                # get just the last block to avoid only time changes
                 if isinstance(data, list) and data:
                     patch_data = data[-1].get("patches", {})
                 elif isinstance(data, dict):
