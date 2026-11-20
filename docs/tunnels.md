@@ -189,11 +189,16 @@ To allow mobile app updates without compromising your server's security, use one
 
 ### 1. Path Bypass Rules (Recommended)
 
-Add a **Bypass** policy in your tunnel provider for only the two paths needed by your phone:
+Add a **Bypass** policy in your tunnel provider for only the paths needed by your mobile client:
 
-* **Paths to Bypass**:
+* **If using Obtainium (1-Tap Sync / QR Code)**:
   * `/files/*` (the APK downloads)
   * `/index-v2.json` (the repository index that tells your phone when an update is available)
+* **If using F-Droid or Neo Store (`.../repo`)**:
+  * `/repo/*` (covers both the repository index `/repo/index-v2.json` and APK downloads `/repo/files/*`)
+  *(Or if your provider requires exact paths: `/repo/files/*` and `/repo/index-v2.json`)*
+* **If supporting both clients**:
+  * `/files/*`, `/index-v2.json`, and `/repo/*`
 * **What stays protected**: Your root dashboard (`/`), admin APIs (`/api/*`), build triggers, settings, and live console remain 100% protected behind your SSO login screen.
 * **Is `/files/*` open to directory browsing?**: **No.** AutoMorph does not expose directory listings under `/files/*` (visiting any folder directly redirects into the dashboard). An outsider cannot see or browse what files exist unless they already know the exact package name, version, and APK filename.
 

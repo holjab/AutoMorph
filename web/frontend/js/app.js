@@ -6203,7 +6203,8 @@ function copyObtainiumJson() {
 
 function copyFdroidRepoUrl() {
   const customBase = state.settings?.system?.base_url;
-  const repoUrl = (customBase && customBase.trim()) ? customBase.trim().replace(/\/+$/, '') : window.location.origin;
+  const base = (customBase && customBase.trim()) ? customBase.trim().replace(/\/+$/, '') : window.location.origin;
+  const repoUrl = `${base}/repo`;
   navigator.clipboard.writeText(repoUrl).then(() => {
     showToast(`F-Droid Repo URL copied: ${repoUrl}`, 'success');
   }).catch(() => {

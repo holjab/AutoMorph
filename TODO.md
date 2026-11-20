@@ -25,6 +25,8 @@
 
 - [ ] Only check number of patched packages for packages that have been patched
 
+- [ ] Add signer block to index-v2.json for f-droid clients
+
 ## Past Fixes
 - [x] Check line 130 in main - version is 0.0.0 for package with no requirement
     - [x] Also an issue in line 138 as if the version is none, it doesn't find the already patched app (8.3.2 for infinity)

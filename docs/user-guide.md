@@ -347,7 +347,12 @@ If you'd like to import all your patched apps into Obtainium at once:
 
 > [!IMPORTANT]
 > **Using Cloudflare Zero Trust or Pangolin SSO?**
-> If your AutoMorph instance is protected behind a login screen, mobile background updaters cannot solve the login prompt and will fail to download. You must add a **Bypass Rule** for `/files/*` and `/index-v2.json` in your tunnel provider. See the [Remote Access & Tunnels Guide](tunnels.md#tunnel-authentication--mobile-apps-cloudflare-access--pangolin-sso) for instructions.
+> If your AutoMorph instance is protected behind a login screen, mobile background updaters cannot solve the login prompt and will fail to download:
+> - **For Obtainium (1-Tap Import)**: Add a Bypass Rule for `/files/*` and `/index-v2.json`.
+> - **For F-Droid / Neo Store (`/repo`)**: Add a Bypass Rule for `/repo/*` (or `/repo/files/*` and `/repo/index-v2.json`).
+> - **Supporting both**: Bypass `/files/*`, `/index-v2.json`, and `/repo/*`.
+>
+> See the [Remote Access & Tunnels Guide](tunnels.md#tunnel-authentication--mobile-apps-cloudflare-access--pangolin-sso) for full setup instructions.
 
 ### 9.3 Adding AutoMorph as an F-Droid Repository (Obtainium & Neo Store)
 

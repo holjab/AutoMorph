@@ -855,8 +855,12 @@ async def api_list_patched_files(path: str = "") -> dict[str, Any]:
     }
 
 
-@app.get("/files")
-@app.get("/files/{subpath:path}")
+@app.api_route("/files", methods=["GET", "HEAD"])
+@app.api_route("/files/{subpath:path}", methods=["GET", "HEAD"])
+@app.api_route("/repo/files", methods=["GET", "HEAD"])
+@app.api_route("/repo/files/{subpath:path}", methods=["GET", "HEAD"])
+@app.api_route("/fdroid/repo/files", methods=["GET", "HEAD"])
+@app.api_route("/fdroid/repo/files/{subpath:path}", methods=["GET", "HEAD"])
 async def serve_patched_files(request: Request, subpath: str = "") -> Response:
     """
     Serves files from apps/patched/.
@@ -979,9 +983,9 @@ def _ensure_obtainium_files(base_url: str) -> tuple[Path, Path]:
     return export_file, index_file
 
 
-@app.get("/index-v2.json")
-@app.get("/repo/index-v2.json")
-@app.get("/fdroid/repo/index-v2.json")
+@app.api_route("/index-v2.json", methods=["GET", "HEAD"])
+@app.api_route("/repo/index-v2.json", methods=["GET", "HEAD"])
+@app.api_route("/fdroid/repo/index-v2.json", methods=["GET", "HEAD"])
 async def serve_fdroid_index(request: Request):
     """
     Serves the F-Droid v2 repository index for Obtainium and F-Droid clients.
@@ -993,8 +997,8 @@ async def serve_fdroid_index(request: Request):
     raise HTTPException(status_code=404, detail="F-Droid repository index not found. No apps patched yet.")
 
 
-@app.get("/automorph-obtainium.json")
-@app.get("/api/obtainium/download")
+@app.api_route("/automorph-obtainium.json", methods=["GET", "HEAD"])
+@app.api_route("/api/obtainium/download", methods=["GET", "HEAD"])
 async def download_obtainium_export(request: Request):
     """
     Directly downloads the Obtainium import configuration file (automorph-obtainium.json).
