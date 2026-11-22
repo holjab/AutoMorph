@@ -13,6 +13,48 @@ from zipfile import ZipFile
 
 logger = logging.getLogger(__name__)
 
+
+def highest_compatible_version(section: str) -> tuple[tuple[int, ...], str]:
+    """Highest version listed under "Compatible versions:" in one package section of
+    `list-patches --with-versions` output.
+
+    Bundles do not list versions newest-first (e.g. crimera/piko-newx lists
+    12.38.1-prod.01 before 12.41.0-prod.01), so taking the first line targets an older
+    version than the patches support. Experimental versions are not in the listing
+    (no `-x`), so the highest one is the newest supported version.
+
+    The list is read by indentation, not up to the next ":", because some versions
+    contain a colon (wchill/patcheddit: v23.06.30-13:39). A version code suffix
+    ("<version>: ARM64_V8A=...") is ignored here.
+    """
+    versions = []
+    indent = None
+
+    for line in section.splitlines():
+        if indent is None:
+            if "Compatible versions:" in line:
+                indent = len(line) - len(line.lstrip())
+                same_line = line.split("Compatible versions:", 1)[1].strip()
+                if same_line:
+                    versions.append(same_line)
+            continue
+
+        entry = line.strip()
+        if not entry or len(line) - len(line.lstrip()) <= indent:
+            break
+        versions.append(entry)
+
+    best = None
+    for entry in versions:
+        with_codes = re.match(r"^(.+?):\s+[A-Z0-9_]+=\d+", entry)
+        if with_codes:
+            entry = with_codes.group(1).strip()
+        key = tuple(int(d) for d in re.findall(r"\d+", entry))
+        if key and (best is None or key > best[0]):
+            best = (key, entry)
+
+    return best or ((0, 0, 0), "0.0.0")
+
 class Morphe:
 
     def __init__(self, project_root: Path, original_dir: Path, patched_dir: Path, detailed_app_list: dict[str, dict], repo_details: dict[str, dict], low_spec_mode: bool, force: bool, base_url: str) -> None:
@@ -623,11 +665,7 @@ class Morphe:
                         for section in package_sections:
                             pkg = section.split()[0]
 
-                            version_search = re.search(r"Compatible versions:\s*(.+)", section)
-                            first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
-                            version_digits = re.findall(r"\d+", first_ver_line)
-                            tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
-                            ver_str = first_ver_line.strip() if version_digits else "0.0.0"
+                            tup_ver, ver_str = highest_compatible_version(section)
 
                             abi_version_codes = {}
                             vcs = re.search(rf"^\s*{re.escape(ver_str)}:\s*(.+)$", section, re.MULTILINE)
