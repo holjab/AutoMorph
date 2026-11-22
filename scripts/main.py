@@ -60,7 +60,8 @@ def main(project_root: Path, conf: dict) -> None:
 
         package_version_req, enabled_patches = result
         sources = project_root / "tools" / "automorph-data" / "app_sources.yaml"
-        download_list = check_patched_version(package_version_req, patched_dir, sources, force, detailed_app_list)
+        patched_records = manager.read_json(patched_json) or {}
+        download_list = check_patched_version(package_version_req, patched_dir, sources, force, detailed_app_list, morphe, patched_records)
 
         if target_pkg:
             download_list = {k: v for k, v in download_list.items() if k == target_pkg}
@@ -81,6 +82,7 @@ def main(project_root: Path, conf: dict) -> None:
             patch_success[package_name] = {'dest': patched_details['output_dest'], 'arch': details.get('arch', None), 'scanned_repos': scanned_repos, 'applied_repos': resolved_applied, 'strategy': patched_details['strat'], 'attempt': patched_details['attempt'], 'attempts': attempt_details}
             
             if patched_details['attempt'] is not None:
+                patched_details['fingerprint'] = morphe.build_fingerprint(package_name)
                 patched[package_name] = patched_details
                 patch_executed = True
     
@@ -193,7 +195,7 @@ def parse_yaml(conf: dict) -> tuple:
 
     return striplibs, detailed_app_list, repo_details, low_spec_mode, max_original_packages, max_patched_packages, global_arch
 
-def check_patched_version(package_req: dict | list, patched: Path, sources: Path, force: bool, detailed_app_list: dict):
+def check_patched_version(package_req: dict | list, patched: Path, sources: Path, force: bool, detailed_app_list: dict, morphe: Morphe | None = None, patched_records: dict | None = None):
     logger.debug(f"\npackage_req:\n{package_req}\n")
     needs_patching = {}
 
@@ -249,7 +251,12 @@ def check_patched_version(package_req: dict | list, patched: Path, sources: Path
             filename = f"{package_name}_{version}_{arch}_patched.apk"
             file_path = patched_version_path / filename
             if file_path.is_file():
-                
+
+                if first_it and is_stale_build(package_name, version, morphe, patched_records):
+                    logger.info(f" └── {filename} was built from older patches or options. Added to needs patching list (rebuild).")
+                    target_versions[version_tup] = {'version_str': version, 'version_code': target_vc, 'rebuild': True}
+                    break
+
                 if first_it:
                     logger.info(f" └── [✓] {filename} latest version {version} already patched. Skipping package...")
                     target_versions = {}
@@ -278,6 +285,27 @@ def check_patched_version(package_req: dict | list, patched: Path, sources: Path
         logger.info(" └── [✓] None! All packages are up to date.")
 
     return needs_patching
+
+def is_stale_build(package_name: str, version: str, morphe: Morphe | None, patched_records: dict | None) -> bool:
+    """True when the existing APK of this version was built from other patch bundle
+    versions or other patch options than the current ones (see Morphe.build_fingerprint).
+
+    Builds recorded before fingerprints existed have no 'built_with' and are left alone,
+    so upgrading does not rebuild every app at once; they get a fingerprint with their
+    next build.
+    """
+    if morphe is None or not patched_records:
+        return False
+
+    versions = patched_records.get(package_name) or {}
+    entry = versions.get(version) or next(
+        (v for v in versions.values() if v.get('package', {}).get('source_version_name') == version), None)
+    built_with = (entry or {}).get('patch', {}).get('built_with')
+    if not built_with:
+        return False
+
+    current = morphe.build_fingerprint(package_name)
+    return current is not None and current != built_with
 
 def patch_piepline(package_name: str, details: dict, downloader: Downloader, morphe: Morphe, enabled_patches: dict, patched_dir: Path, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
     targets = details['target_versions']
@@ -308,7 +336,7 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
                 patch_attempt += 1
                 continue
 
-        if patched_package.is_file() and not force:
+        if patched_package.is_file() and not force and not target_details.get('rebuild'):
             logger.info(f" └── [✓] {package_name} {arch} v{target_version} is already patched.")
             return True, attempt_details, {'arch': arch, 'repos': None, "strat": run, 'output_dest': patched_package, 'attempt': None}
 

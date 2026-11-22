@@ -72,6 +72,7 @@ class Morphe:
         self.morphe_location = project_root / "tools" / "morphe.jar"
         
         self.repo_versions_json = self.state_dir / "repo_versions.json"
+        self.current_repo_versions = {}
         self.options_checksum_json = self.state_dir / "options_checksum.json"
 
         self.repo_search: dict[str, set[str]] = {}
@@ -115,6 +116,7 @@ class Morphe:
 
     def scan_updates(self) -> dict[str, set[str]]:
         new_repo_versions = self.find_repo_version()
+        self.current_repo_versions = new_repo_versions or {}
         updated_repos = self.check_repo_update(new_repo_versions)
 
         if updated_repos:
@@ -345,6 +347,37 @@ class Morphe:
 
         except OSError as e:
             logger.error(f" └── [!] Failed to write {self.repo_versions_json.name}: {e}")
+
+    def build_fingerprint(self, package_name: str) -> dict | None:
+        """What an app's patched APK is built from: the version of each of its patch
+        bundles and a checksum of its current patch selection and options.
+
+        Stored with every build in patched.json ('patch' -> 'built_with'), so that a new
+        bundle release or an edited options file can trigger a rebuild of a version that
+        is already patched. Returns None when a bundle version is unknown (e.g. the
+        release lookup failed), so a lookup error never looks like a change.
+        """
+        try:
+            cached = {}
+            if self.repo_versions_json.is_file():
+                with open(self.repo_versions_json, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+
+            bundles = {}
+            for repo in self.detailed_patch_list.get(package_name, {}).get('repos', []):
+                version = self.current_repo_versions.get(repo) or cached.get(repo)
+                if not version:
+                    return None
+                bundles[repo] = ".".join(str(v) for v in version)
+
+            app_options = sorted((self.options_dir / package_name).glob('*_options.json'))
+            checksums = self.generate_checksum(app_options)
+            options = hashlib.sha256(json.dumps(checksums, sort_keys=True).encode("utf-8")).hexdigest()
+
+            return {'bundles': bundles, 'options': options}
+        except Exception as e:
+            logger.warning(f" └── [!] Could not compute build fingerprint for {package_name}: {e}")
+            return None
 
     def check_repo(self, repo: str | None = None) -> set[str]:
         app_set = set()
