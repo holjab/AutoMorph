@@ -46,7 +46,6 @@ def main(project_root: Path, conf: dict) -> None:
                 target_repos = detailed_app_list[target_pkg]['repos']
                 detailed_app_list = {target_pkg: detailed_app_list[target_pkg]}
                 repo_details = {r: details for r, details in repo_details.items() if r in target_repos}
-                override_repo = detailed_app_list.get('override_repo')
             else:
                 logger.warning(f"[!] Target package '{target_pkg}' not found in configured apps list.")
         
@@ -67,7 +66,8 @@ def main(project_root: Path, conf: dict) -> None:
 
         for package_name, details in download_list.items():
             scanned_repos = detailed_app_list[package_name]['repos']
-            result, attempt_details, patched_details = patch_piepline(package_name, details, downlader, morphe, enabled_patches, patched_dir, striplibs, force)            
+            channel = "pre-release" if detailed_app_list[package_name]['pre-release'] else "latest"
+            result, attempt_details, patched_details = patch_piepline(package_name, details, downlader, morphe, enabled_patches, patched_dir, striplibs, force, channel)            
 
             resolved_applied = list(patched_details['repos']) if patched_details['repos'] else list(scanned_repos)
                 
@@ -148,7 +148,6 @@ def check_env(project_root: Path):
 
 def parse_yaml(conf: dict) -> tuple: 
     low_spec_mode = conf.get("low_spec_mode", False)
-    # architecture = conf["architecture"]
     striplibs = conf["striplibs"]
     max_original_packages = conf.get('max_original_packages')
     max_patched_packages = conf.get('max_patched_packages')
@@ -289,7 +288,7 @@ def check_patched_version(package_req: dict | list, patched: Path, sources: Path
 
     return needs_patching
 
-def patch_piepline(package_name: str, details: dict, downloader: Downloader, morphe: Morphe, enabled_patches: dict, patched_dir: Path, striplibs: bool, force: bool) -> tuple[bool, list[dict], dict]:
+def patch_piepline(package_name: str, details: dict, downloader: Downloader, morphe: Morphe, enabled_patches: dict, patched_dir: Path, striplibs: bool, force: bool, channel: str) -> tuple[bool, list[dict], dict]:
     targets = details['target_versions']
     patch_attempt = details.get('patch_attempt', 0)
     arch = details['arch']
@@ -327,7 +326,16 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
         if not patch_list:
             logger.warning(f" └── [!] Base APK download/verification failed for v{target_version}.")
             failed_downloads.add(target_version)
-            attempt_details.append({"version": target_version, "run": run, "stage": "Download / Verification", "reason": dl_reason or f"Base APK download/verification failed for v{target_version}"})
+
+            attempt_details.append(
+                {
+                    "version": target_version, 
+                    "run": run, 
+                    "stage": "Download / Verification", 
+                    "reason": dl_reason or f"Base APK download/verification failed for v{target_version}"
+                }
+            )
+
             patch_attempt += 1
             continue
 
@@ -344,11 +352,32 @@ def patch_piepline(package_name: str, details: dict, downloader: Downloader, mor
         
         if result:
             winning_attempt = (patch_attempt + 1) if run == 1 else (patch_attempt - len(targets) + 1)
-            patched = {'version_name': target_version, 'arch': arch, 'repos': repos, 'strat': run, 'attempt': winning_attempt, 'options': options_to_use, 'output_dest': dest, 'results_dest': patch_reason, 'package': package, 'time': time}
+
+            patched = {
+                'version_name': target_version, 
+                'arch': arch,
+                'channel': channel, 
+                'repos': repos, 
+                'strat': run, 
+                'attempt': winning_attempt, 
+                'options': options_to_use, 
+                'output_dest': dest, 
+                'results_dest': patch_reason, 
+                'package': package, 
+                'time': time
+            }
+            
             return True, attempt_details, patched
 
-        attempt_details.append({'version': target_version, 'run': run, 'stage': "Morphe Patching", 'reason': patch_reason or ("Incompatible bytecode" if run == 1 else "Fallback patch failure")})
-
+        attempt_details.append(
+            {
+            'version': target_version, 
+            'run': run, 
+            'stage': "Morphe Patching", 
+            'reason': patch_reason or ("Incompatible bytecode" if run == 1 else "Fallback patch failure")
+            }
+        )
+            
         if run == 1:
             if dest == "one_repo" and len(targets) == 1:
                 logger.warning(f"\n[✗] Only attempt failed for {package_name} when attempting all enabled patches. No other versions to try.")

@@ -45,9 +45,10 @@ class Patched:
             if applied_patches_res:  
                 if bundles:
                     for r in details['repos']:
-                        cached_mpp_path = self.repo_details[r]['cached_repo']['cached_mpp_path']
+                        cached_repos = self.repo_details[r].get('cached_repos', {})
+                        cached_mpp_path = cached_repos.get(details.get('channel', 'latest')) or next(iter(cached_repos.values()), None)
                         sha = self.repo_details[r].get("sha")
-                        if not sha:
+                        if not sha and cached_mpp_path:
                             sha = self.make_sha(cached_mpp_path)
                             self.repo_details[r]["sha"] = sha
                         target_shas[sha] = r
@@ -153,6 +154,7 @@ class Patched:
                 'applied_patches': applied_patches,
                 'patch_aliases': patch_aliases,
                 'repos': list(details['repos']),
+                'channel': details['channel'],
                 'strat': details['strat'],
                 'attempt': details['attempt'],
                 'morphe_desktop_version': morphe_version
@@ -492,6 +494,7 @@ def remake_patched(project_root: Path, base_url: str, patched_json: Path, patche
                     "applied_patches": {},
                     "patch_aliases": {},
                     "repos": [],
+                    'channel': "unknown",
                     "strat": 1,
                     "attempt": 1,
                     "morphe_desktop_version": rec.get("patchedWithMorpheVersion", "Unknown"),

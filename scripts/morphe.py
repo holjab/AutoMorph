@@ -46,6 +46,7 @@ class Morphe:
 
         for cached_repo in cached_repo_dir.glob("*.mpp"):
             if channel in cached_repo.name:
+                self.repo_details[repo].setdefault('cached_repos', {})[channel] = cached_repo
                 return cached_repo
 
 #################################
@@ -57,7 +58,8 @@ class Morphe:
 
         if self.force:
             (package_name, details), = self.detailed_patch_list.items()
-            self.repo_search = dict.fromkeys(details["repos"], {package_name})
+            channel = 'pre-release' if self.detailed_patch_list[package_name]['pre-release'] else 'latest'
+            self.repo_search = dict.fromkeys(details["repos"], {channel: {package_name}})
         
         if not self.repo_search:
             logger.info("\n[✓] No updated option files or new/updated repos found.\n Exiting...")
@@ -219,11 +221,11 @@ class Morphe:
             repo_type = self.repo_details[repo]['repo_type']
             api_urls = self.repo_details[repo]['api_urls']
             headers = self.repo_details[repo]['headers']
-            pre_release = False
+            channel = 'latest'
 
             for api_url in api_urls:
                 if "latest" not in api_url:
-                    pre_release = True
+                    channel = 'pre-release'
 
                 try:
                     res = (requests.get(api_url, headers=headers, timeout=15))
@@ -238,7 +240,7 @@ class Morphe:
                     continue
 
                 if repo_type == 'github':
-                    if pre_release == True:
+                    if channel == 'pre-release':
                         asset_list = response[0].get("assets", []) if response else []
                         tag_name = response[0].get("tag_name", "") if response else ""
                     else:   
@@ -259,7 +261,7 @@ class Morphe:
                     logger.error("No .mpp asset found in release.")
                     continue    
 
-                if pre_release:
+                if channel == 'pre-release':
                     ver = self.repo_details[repo]['repo_options']['pre-release']
                     id = ".".join(ver)
                     dest = self.project_root / "tools" / "morphe-data" / "patches" / f"{owner}-{repo_name}" / f"{id}_pre-release_{file_name}"
@@ -287,7 +289,7 @@ class Morphe:
                                     f.write(chunk)
                         tmp_path.replace(dest)
                         logger.info(f" └── [✓] Download complete for '{owner}': {dest.name}")
-                        self.repo_details[repo]['cached_repo'] = {'cached_mpp_path': dest}
+                        self.repo_details[repo].setdefault('cached_repos', {})[channel] = dest
                 except requests.exceptions.RequestException as e:
                     logger.error(f" └── [!] Download failed for '{file_name}': {e}")
                     if "tmp_path" in locals() and tmp_path.exists():
@@ -309,7 +311,7 @@ class Morphe:
                 if repo in self.repo_details:
                     expected_options = app_options_dir / f"{self.repo_details[repo]['owner']}_options_{channel}.json"
                     if not expected_options.is_file():
-                        updated_repos.setdefault(repo, set()).add(app)
+                        updated_repos.setdefault(repo, {}).setdefault(channel, set()).add(app)
             
             repo_options_list.extend(app_options_dir.glob('*.json'))
 
@@ -322,7 +324,7 @@ class Morphe:
         except FileNotFoundError:
             logger.info(f" └── [!] No checksum json found. Will add all repos to update repos list...")
             for repo in self.repo_details:
-                updated_repos[repo] = self.check_repo(repo)
+                updated_repos.setdefault(repo, {}).update(self.check_repo("new", repo))
             return updated_repos
 
         for options_json, checksum in checksums.items():
@@ -337,7 +339,7 @@ class Morphe:
                 if not checksum == cached_checksum:
                     options_file = options_json.split("/")[-1]
                     package_name = options_json.split("/")[-2]
-                    options_owner = options_json.split("/")[-1].split("_options.json")[0]
+                    options_owner = re.sub(r"_options_(latest|pre-release)\.json$", "", options_file)
                     owner_to_repo = {d['owner']: r for r, d in self.repo_details.items()}
 
                     logger.info(f" └── [!] Options file '{package_name}/{options_file}' has changed. Will add to update repos list.")
@@ -346,7 +348,9 @@ class Morphe:
                         logger.warning(f" └── [!] Could not locate repo for '{options_owner}'. Skipping...")
                         continue
                     matched_repo = owner_to_repo[options_owner]
-                    updated_repos.setdefault(matched_repo, set()).add(package_name)
+                    channel = "pre-release" if self.detailed_patch_list[package_name].get('pre-release') else "latest"
+                    updated_repos.setdefault(matched_repo, {}).setdefault(channel, set()).add(package_name)
+
         return updated_repos
                     
     def write_repo_versions_json(self, new_repo_versions: dict[str, list[str]]) -> None:
@@ -390,23 +394,6 @@ class Morphe:
                         apps['pre-release'].add(package_name)
 
         return {ch: ap for ch, ap in apps.items() if ap}
-
-    def get_cached_repo_path(self, owner: str, repo_name: str, repo: str) -> Path | None:
-        mpp_path = self.repo_details.get(repo, {}).get("cached_repo", {}).get("cached_mpp_path")
-
-        if not mpp_path:
-            cached_dir = self.project_root / "tools" / "morphe-data" / "patches" / f"{owner}-{repo_name}"
-            if cached_dir.is_dir():
-                mpp_path = next((f for f in cached_dir.iterdir() if f.is_file() and f.name.endswith(".mpp")), None)
-                if mpp_path:
-                    self.repo_details.setdefault(repo, {}).setdefault("cached_repo", {})["cached_mpp_path"] = mpp_path
-                else:
-                    logger.warning(f" └── [!] Unable to find cached repo mpp for {owner}")
-                    return None
-            else:
-                return None
-
-        return mpp_path if mpp_path else None
 
 #################################
 #           OPTIONS             #
@@ -471,13 +458,17 @@ class Morphe:
 
     def filter_repos(self) -> tuple[dict[str, dict[str, dict[str, str]]], set[str]]:
         enabled_patches_per_app = {}
-        all_enabled_repos = set()
+        all_enabled_repos = {}
 
         for app, details in self.detailed_patch_list.items():
             app_options_dir = self.options_dir / app
             for repo in details.get('repos', []):
+                channel = "latest"
+                if details['pre-release']:
+                    channel = "pre-release"
+
                 owner = self.repo_details.get(repo, {}).get('owner')
-                options_file_name = app_options_dir / f"{owner}_options.json"
+                options_file_name = app_options_dir / f"{owner}_options_{channel}.json"
 
                 if not options_file_name.is_file():
                     continue
@@ -500,7 +491,8 @@ class Morphe:
 
                         if isinstance(values, dict) and values.get('enabled'):
                             enabled_patches_per_app.setdefault(app, {}).setdefault(alias, {})[repo] = patch
-                            all_enabled_repos.add(repo)
+                            all_enabled_repos.setdefault(repo, set()).add(channel)
+
 
         return enabled_patches_per_app, all_enabled_repos
 
@@ -551,10 +543,11 @@ class Morphe:
         with open(self.options_checksum_json, "w", encoding="utf-8") as f:
             json.dump(existing_checksums, f, indent=2, sort_keys=True)
 
-    def merge_target_repos(self, package_name: str, repos: set[str], version_name: str) -> Path:
+    def merge_target_repos(self, package_name: str, repos: dict[str, str], version_name: str) -> Path:
         if len(repos) == 1:
             logger.debug(f" └── Only one repo ('{next(iter(repos))}') for '{version_name}', package: '{package_name}'")
-            options_to_use = self.options_dir / package_name / f"{self.repo_details[next(iter(repos))]['owner']}_options.json"
+            repo, channel = next(iter(repos.items()))
+            options_to_use = self.options_dir / package_name / f"{self.repo_details[repo]['owner']}_options_{channel}.json"
             return options_to_use
 
         app_options_dir = self.options_dir / package_name
@@ -563,10 +556,10 @@ class Morphe:
         seen_shas = set()
         logger.info(f"\n[*] Creating merged options.json for {package_name}...")
 
-        for repo in repos:
+        for repo, channel in repos.items():
             logger.info(f" ├── Merging {repo}...")
             owner = self.repo_details[repo]['owner']
-            options_file = app_options_dir / f"{owner}_options.json"
+            options_file = app_options_dir / f"{owner}_options_{channel}.json"
 
             with open(options_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -596,9 +589,10 @@ class Morphe:
 
         for alias, details in enabled_patches_per_app_versions.items():
             if len(details) > 1:
+                channel = "pre-release" if self.detailed_patch_list[package_name]['pre-release'] else "latest"
                 logger.info(f" └── [!] Alias found {alias}")
                 for repo, patch_info in details.items():
-                    shas = self.get_sha(repo, package_name)
+                    shas = self.get_sha(repo, package_name, channel)
                     patch_name = patch_info['patch_name']
                     patch_version_name = patch_info['version_name_str']
 
@@ -625,10 +619,10 @@ class Morphe:
         with open(options_to_use, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-    def get_sha(self, repo: str, package_name: str) -> set[str]:
+    def get_sha(self, repo: str, package_name: str, channel: str) -> set[str]:
         shas = set()
         owner = self.repo_details[repo]['owner']
-        options_file = self.options_dir / package_name / f"{owner}_options.json"
+        options_file = self.options_dir / package_name / f"{owner}_options_{channel}.json"
 
         with open(options_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -655,89 +649,100 @@ class Morphe:
         logger.info(f"\n[*] Searching for patches in {len(enabled_repos)} repos:")
         enabled_patches_per_app_versions = {}
 
-        for repo in enabled_repos:
+        for repo, channels in enabled_repos.items():
             logger.info(f" ├── {repo}")
 
-            cached_repo = self.get_cached_repo(repo)
+            for repo_channel in channels:
 
-            if not cached_repo:
-                continue
+                cached_repo = self.get_cached_repo(repo, repo_channel)
 
-            result = subprocess.run(
-                [
-                    "java",
-                    "-jar",
-                    str(self.morphe_location),
-                    "list-patches",
-                    "--patches",
-                    cached_repo,
-                    "--with-packages",
-                    "--with-versions",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+                if not cached_repo:
+                    continue
 
-            if result.returncode in (130, 143, -2, -15, -9) or result.returncode < 0:
-                logger.critical("\n │     └── [!] Patch listing cancelled by user.")
-                raise KeyboardInterrupt("Cancelled by user")
+                result = subprocess.run(
+                    [
+                        "java",
+                        "-jar",
+                        str(self.morphe_location),
+                        "list-patches",
+                        "--patches",
+                        cached_repo,
+                        "--with-packages",
+                        "--with-versions",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
 
-            if result.returncode == 0:
-                logger.info(f" │     └── [✓] Success!")
-                for block in result.stdout.split('Index: ')[1:]:
-                    patch_search = re.search(r"Name:\s*(.+)", block)
-                    if not patch_search:
-                        continue
+                if result.returncode in (130, 143, -2, -15, -9) or result.returncode < 0:
+                    logger.critical("\n │     └── [!] Patch listing cancelled by user.")
+                    raise KeyboardInterrupt("Cancelled by user")
 
-                    patch_name = patch_search.group(1).strip()
-                    package_sections = re.split(r"Package name:\s*", block)[1:]
+                if result.returncode == 0:
+                    logger.info(f" │     └── [✓] Success!")
+                    for block in result.stdout.split('Index: ')[1:]:
+                        patch_search = re.search(r"Name:\s*(.+)", block)
+                        if not patch_search:
+                            continue
 
-                    if package_sections:
-                        for section in package_sections:
-                            pkg = section.split()[0]
+                        patch_name = patch_search.group(1).strip()
+                        package_sections = re.split(r"Package name:\s*", block)[1:]
 
-                            version_search = re.search(r"Compatible versions:\s*(.+)", section)
-                            first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
-                            version_digits = re.findall(r"\d+", first_ver_line)
-                            tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
-                            ver_str = first_ver_line.strip() if version_digits else "0.0.0"
+                        if package_sections:
+                            for section in package_sections:
+                                pkg = section.split()[0]
 
-                            abi_version_codes = {}
-                            vcs = re.search(rf"^\s*{re.escape(ver_str)}:\s*(.+)$", section, re.MULTILINE)
-                            if not vcs:
-                                vcs = re.search(r"Version codes:\s*(.+)", section)
-    
-                            if vcs:
-                                version_codes = vcs.group(1).strip().splitlines()[0] if vcs else ""
-                                abi_codes = re.findall(r"([A-Z0-9_]+)=(\d+)", version_codes)
-                                normalised_abis = {'ARM64_V8A': 'arm64-v8a', 'ARMEABI_V7A': 'armeabi-v7a', 'X86_64': 'x86_64', 'X86': 'x86'}
-                                abi_version_codes = {normalised_abis.get(abi, abi.lower()): int(vc) for abi, vc in abi_codes}
+                                version_search = re.search(r"Compatible versions:\s*(.+)", section)
+                                first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
+                                version_digits = re.findall(r"\d+", first_ver_line)
+                                tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
+                                ver_str = first_ver_line.strip() if version_digits else "0.0.0"
 
-                            if pkg in enabled_patches_per_app:
-                                for alias, details in enabled_patches_per_app[pkg].items():
+                                abi_version_codes = {}
+                                vcs = re.search(rf"^\s*{re.escape(ver_str)}:\s*(.+)$", section, re.MULTILINE)
+                                if not vcs:
+                                    vcs = re.search(r"Version codes:\s*(.+)", section)
+        
+                                if vcs:
+                                    version_codes = vcs.group(1).strip().splitlines()[0] if vcs else ""
+                                    abi_codes = re.findall(r"([A-Z0-9_]+)=(\d+)", version_codes)
+                                    normalised_abis = {'ARM64_V8A': 'arm64-v8a', 'ARMEABI_V7A': 'armeabi-v7a', 'X86_64': 'x86_64', 'X86': 'x86'}
+                                    abi_version_codes = {normalised_abis.get(abi, abi.lower()): int(vc) for abi, vc in abi_codes}
+
+                                if pkg in enabled_patches_per_app:
+                                    pkg_channel = "pre-release" if self.detailed_patch_list[pkg]['pre-release'] else "latest"
+
+                                    if pkg_channel != repo_channel:
+                                        continue
+
+                                    for alias, details in enabled_patches_per_app[pkg].items():
+
+                                        if repo in details and details[repo] == patch_name:
+                                            
+                                            enabled_patches_per_app_versions.setdefault(pkg, {}).setdefault(alias, {})[repo] = {
+                                                'patch_name': patch_name,
+                                                'version_name_tuple': tup_ver,
+                                                'version_name_str': ver_str,
+                                                'abi_version_codes': abi_version_codes,   
+                                                'channel': pkg_channel                                         
+                                            }
+
+                        else:
+                            for app_pkg, aliases in enabled_patches_per_app.items():
+                                for alias, details in aliases.items():
                                     if repo in details and details[repo] == patch_name:
-                                        enabled_patches_per_app_versions.setdefault(pkg, {}).setdefault(alias, {})[repo] = {
+                                        enabled_patches_per_app_versions.setdefault(app_pkg, {}).setdefault(alias, {})[repo] = {
                                             'patch_name': patch_name,
-                                            'version_name_tuple': tup_ver,
-                                            'version_name_str': ver_str,
-                                            'abi_version_codes': abi_version_codes                                            
+                                            'version_name_tuple': (0, 0, 0),
+                                            'version_name_str': '0.0.0',
+                                            'abi_version_codes': {}, 
+                                            'channel': repo_channel
                                         }
 
-                    else:
-                        for app_pkg, aliases in enabled_patches_per_app.items():
-                            for alias, details in aliases.items():
-                                if repo in details and details[repo] == patch_name:
-                                    enabled_patches_per_app_versions.setdefault(app_pkg, {}).setdefault(alias, {})[repo] = {
-                                        'patch_name': patch_name,
-                                        'version_name_tuple': (0, 0, 0),
-                                        'version_name_str': '0.0.0',
-                                        'abi_version_codes': {} 
-                                    }
-
-            else:
-                err_msg = result.stderr.strip().splitlines()[-1] if result.stderr else "Unknown error"
-                logger.error(f" │     └── [✗] Repo search failed (exit code {result.returncode}): {err_msg}")
+                else:
+                    err_msg = result.stderr.strip().splitlines()[-1] if result.stderr else "Unknown error"
+                    logger.error(f" │     └── [✗] Repo search failed (exit code {result.returncode}): {err_msg}")
 
         return enabled_patches_per_app_versions
      
@@ -782,7 +787,7 @@ class Morphe:
             repo_per_version = self.check_repo_per_version(enabled_patches_per_app_versions[package_name])
             logger.debug(f"Check options to use, repo per version: {repo_per_version}")
             
-            repos = repo_per_version.get((0, 0, 0), set()) if latest else repo_per_version.get(target_tuple, set())
+            repos = repo_per_version.get((0, 0, 0), {}) if latest else repo_per_version.get(target_tuple, {})
 
             options_to_use = self.merge_target_repos(package_name, repos, target_version)
             self.check_aliase_clash(package_name, target_version, enabled_patches_per_app_versions[package_name], options_to_use)
@@ -796,29 +801,29 @@ class Morphe:
 
         return repos, options_to_use
 
-    def check_repo_reqs(self, aliase_details: dict[str, dict[str, dict]], target_version: str) -> set[str]:
-        repos = set()
+    def check_repo_reqs(self, aliase_details: dict[str, dict[str, dict]], target_version: str) -> dict[str, str]:
+        repos = {}
         for alias, repo_details in aliase_details.items():
             for repo, details in repo_details.items():
                 if details['version_name_str'] == target_version:
-                    repos.add(repo)
+                    repos.setdefault(repo, details.get('channel', ""))
                     break
             else:
                 if repo_details:
                     best_candidate = max(repo_details.items(), key=lambda item: item[1]['version_name_tuple'])
                     chosen_repo = best_candidate[0]
                     if chosen_repo:
-                        repos.add(chosen_repo)
+                        repos.setdefault(chosen_repo, best_candidate[1].get('channel', ""))
                 else:
                     logger.error(f" └── [!] No repo found for alias: {alias}")
         return repos
     
-    def check_repo_per_version(self, aliase_details: dict[str, dict[str, dict]]) -> dict[tuple[int, ...], set[str]]:
+    def check_repo_per_version(self, aliase_details: dict[str, dict[str, dict]]) -> dict[tuple[int, ...], dict[str, str]]:
         output = {}
 
         for repo_details in aliase_details.values():
             for repo, val in repo_details.items():
-                output.setdefault(val.get('version_name_tuple', (0, 0, 0)), set()).add(repo)
+                output.setdefault(val.get('version_name_tuple', (0, 0, 0)), {})[repo] = val['channel']
 
         return output 
 
@@ -841,13 +846,12 @@ class Morphe:
         if len(repos) == 1:
             dest = "one_repo" 
 
-        for repo in repos:
+        for repo, channel in repos.items():
             owner = self.repo_details[repo]['owner']
             repo_name = self.repo_details[repo]['repo_name']
-            mpp_path = self.get_cached_repo_path(owner, repo_name, repo)
-
+            mpp_path = self.get_cached_repo(repo, channel)
             if not mpp_path:
-                raise FileNotFoundError(f"No cached .mpp bundle found for {owner}/{repo_name}")
+                raise FileNotFoundError(f"No cached .mpp bundle found for {owner}/{repo_name} on channel '{channel}'")
 
             cmd += ["--patches", str(mpp_path)]
 
