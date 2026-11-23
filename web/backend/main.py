@@ -755,7 +755,7 @@ async def stream_logs() -> StreamingResponse:
 
 
 # ---------------------------------------------------------------------------
-# Patched APK Directory Browser & File API (/api/files, /files)
+# Patched APK Directory Browser & File API (/api/files, /repo/files)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/files")
@@ -800,7 +800,7 @@ async def api_list_patched_files(path: str = "") -> dict[str, Any]:
                     dirs.append({
                         "name": entry.name,
                         "path": rel,
-                        "url": f"/files/{rel}",
+                        "url": f"/repo/files/{rel}",
                         "item_count": child_count,
                         "mtime": datetime.fromtimestamp(st.st_mtime, tz=tz).strftime("%Y-%m-%d %H:%M"),
                     })
@@ -815,7 +815,7 @@ async def api_list_patched_files(path: str = "") -> dict[str, Any]:
                         "path": rel,
                         "size": format_bytes(st.st_size),
                         "raw_size": st.st_size,
-                        "url": f"/files/{rel}",
+                        "url": f"/repo/files/{rel}",
                         "mtime": datetime.fromtimestamp(st.st_mtime, tz=tz).strftime("%Y-%m-%d %H:%M"),
                         "is_apk": is_apk,
                         "is_result_json": is_result_json,
@@ -855,12 +855,8 @@ async def api_list_patched_files(path: str = "") -> dict[str, Any]:
     }
 
 
-@app.api_route("/files", methods=["GET", "HEAD"])
-@app.api_route("/files/{subpath:path}", methods=["GET", "HEAD"])
 @app.api_route("/repo/files", methods=["GET", "HEAD"])
 @app.api_route("/repo/files/{subpath:path}", methods=["GET", "HEAD"])
-@app.api_route("/fdroid/repo/files", methods=["GET", "HEAD"])
-@app.api_route("/fdroid/repo/files/{subpath:path}", methods=["GET", "HEAD"])
 async def serve_patched_files(request: Request, subpath: str = "") -> Response:
     """
     Serves files from apps/patched/.
@@ -983,9 +979,7 @@ def _ensure_obtainium_files(base_url: str) -> tuple[Path, Path]:
     return export_file, index_file
 
 
-@app.api_route("/index-v2.json", methods=["GET", "HEAD"])
 @app.api_route("/repo/index-v2.json", methods=["GET", "HEAD"])
-@app.api_route("/fdroid/repo/index-v2.json", methods=["GET", "HEAD"])
 async def serve_fdroid_index(request: Request):
     """
     Serves the F-Droid v2 repository index for Obtainium and F-Droid clients.
@@ -997,7 +991,7 @@ async def serve_fdroid_index(request: Request):
     raise HTTPException(status_code=404, detail="F-Droid repository index not found. No apps patched yet.")
 
 
-@app.api_route("/automorph-obtainium.json", methods=["GET", "HEAD"])
+@app.api_route("/repo/automorph-obtainium.json", methods=["GET", "HEAD"])
 @app.api_route("/api/obtainium/download", methods=["GET", "HEAD"])
 async def download_obtainium_export(request: Request):
     """
@@ -1109,7 +1103,7 @@ async def open_obtainium_redirect(request: Request):
     </p>
     <a href="{deep_link}" class="btn">Tap Here to Open Obtainium</a>
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);">
-      <a href="/automorph-obtainium.json" style="color: #9ca3af; font-size: 0.85rem; text-decoration: underline;">
+      <a href="/repo/automorph-obtainium.json" style="color: #9ca3af; font-size: 0.85rem; text-decoration: underline;">
         Or download JSON file directly
       </a>
     </div>

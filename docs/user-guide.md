@@ -311,7 +311,7 @@ You can download completed APKs through several convenient methods:
 
 If you use Obtainium or an F-Droid client (like F-Droid, Neo Store, or Droid-ify), AutoMorph can act as a personal app repository. It automatically generates:
 1. An **F-Droid v2 Repository Index** (`/repo/index-v2.json`)
-2. An **Obtainium Configuration Export** (`/automorph-obtainium.json`)
+2. An **Obtainium Configuration Export** (`/repo/automorph-obtainium.json`)
 
 ### 9.1 How It Works
 
@@ -347,10 +347,9 @@ If you'd like to import all your patched apps into Obtainium at once:
 
 > [!IMPORTANT]
 > **Using Cloudflare Zero Trust or Pangolin SSO?**
-> If your AutoMorph instance is protected behind a login screen, mobile background updaters cannot solve the login prompt and will fail to download:
-> - **For Obtainium (1-Tap Import)**: Add a Bypass Rule for `/files/*` and `/index-v2.json`.
-> - **For F-Droid / Neo Store (`/repo`)**: Add a Bypass Rule for `/repo/*` (or `/repo/files/*` and `/repo/index-v2.json`).
-> - **Supporting both**: Bypass `/files/*`, `/index-v2.json`, and `/repo/*`.
+> If your AutoMorph instance is protected behind a login screen, mobile background updaters cannot solve the login prompt and will fail to download.
+> Simply add a single **Bypass Rule** for:
+> - `/repo/*` (covers the index, APK downloads, and Obtainium export)
 >
 > See the [Remote Access & Tunnels Guide](tunnels.md#tunnel-authentication--mobile-apps-cloudflare-access--pangolin-sso) for full setup instructions.
 

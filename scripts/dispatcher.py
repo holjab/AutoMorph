@@ -314,9 +314,9 @@ def build_app_success_record(
                 continue
             try:
                 rel_apk = resolved_apk.relative_to(patched_dir)
-                d_url = f"{b_url.rstrip('/')}/files/{rel_apk.as_posix()}"
+                d_url = f"{b_url.rstrip('/')}/repo/files/{rel_apk.as_posix()}"
             except Exception:
-                d_url = f"{b_url.rstrip('/')}/files/{resolved_apk.name}"
+                d_url = f"{b_url.rstrip('/')}/repo/files/{resolved_apk.name}"
             download_urls[ep["id"]] = {
                 **ep,
                 "url": d_url,

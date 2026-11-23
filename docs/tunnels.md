@@ -189,26 +189,21 @@ To allow mobile app updates without compromising your server's security, use one
 
 ### 1. Path Bypass Rules (Recommended)
 
-Add a **Bypass** policy in your tunnel provider for only the paths needed by your mobile client:
+Add a **Bypass** policy in your tunnel or reverse proxy provider for the repository path:
 
-* **If using Obtainium (1-Tap Sync / QR Code)**:
-  * `/files/*` (the APK downloads)
-  * `/index-v2.json` (the repository index that tells your phone when an update is available)
-* **If using F-Droid or Neo Store (`.../repo`)**:
-  * `/repo/*` (covers both the repository index `/repo/index-v2.json` and APK downloads `/repo/files/*`)
-  *(Or if your provider requires exact paths: `/repo/files/*` and `/repo/index-v2.json`)*
-* **If supporting both clients**:
-  * `/files/*`, `/index-v2.json`, and `/repo/*`
+* **Repository Bypass Rule (for both Obtainium & F-Droid / Neo Store)**:
+  * `/repo/*` (covers the repository index `/repo/index-v2.json`, APK downloads `/repo/files/*`, and Obtainium export `/repo/automorph-obtainium.json`)
+  *(Or if your provider requires exact paths: `/repo/files/*`, `/repo/index-v2.json`, and `/repo/automorph-obtainium.json`)*
 * **What stays protected**: Your root dashboard (`/`), admin APIs (`/api/*`), build triggers, settings, and live console remain 100% protected behind your SSO login screen.
-* **Is `/files/*` open to directory browsing?**: **No.** AutoMorph does not expose directory listings under `/files/*` (visiting any folder directly redirects into the dashboard). An outsider cannot see or browse what files exist unless they already know the exact package name, version, and APK filename.
+* **Is `/repo/files/*` open to directory browsing?**: **No.** AutoMorph does not expose directory listings under `/repo/files/*` (visiting any folder directly redirects into the dashboard). An outsider cannot see or browse what files exist unless they already know the exact package name, version, and APK filename.
 
 ### 2. Extra Protection via Cloudflare WAF
 
-If you use Cloudflare and want extra protection on the bypassed `/files/*` path without breaking mobile updates, you can use Cloudflare's **WAF (Web Application Firewall)**:
+If you use Cloudflare and want extra protection on the bypassed `/repo/*` path without breaking mobile updates, you can use Cloudflare's **WAF (Web Application Firewall)**:
 
 * In your Cloudflare Dashboard, go to **Security** › **WAF** › **Custom Rules**.
-* Create a rule targeting the download path:
-  * **Country Restriction**: Restrict downloads to your own country (e.g. `(http.request.uri.path contains "/files/" and ip.geoip.country ne "GB") -> Block`).
+* Create a rule targeting the repository path:
+  * **Country Restriction**: Restrict downloads to your own country (e.g. `(http.request.uri.path contains "/repo/" and ip.geoip.country ne "GB") -> Block`).
   * **Rate Limiting**: Add a rate-limiting rule to block any IP address making more than 15–20 requests per minute.
   * **Bot Fight Mode**: Enable Cloudflare's automated bot protection to block automated web crawlers.
 

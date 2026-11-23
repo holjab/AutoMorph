@@ -406,7 +406,7 @@ def get_last_patch_result(package: str, patched_registry: dict[str, Any] | None 
                 "winning_strategy": strat_num,
                 "winning_strategy_name": strat_name,
                 "winning_attempt_number": attempt_val,
-                "download_url": f"/files/{package}/{best_ver}/{best_loc.name}",
+                "download_url": f"/repo/files/{package}/{best_ver}/{best_loc.name}",
                 "apk_name": best_loc.name,
                 "attempts": detailed_attempts,
                 "patch_owners": patch_owners,
@@ -663,13 +663,13 @@ def get_last_patch_result(package: str, patched_registry: dict[str, Any] | None 
     apk_name = None
     apk_file = PATCHED_DIR / package / card_version / f"{package}_{card_version}_patched.apk"
     if apk_file.is_file():
-        download_url = f"/files/{package}/{card_version}/{package}_{card_version}_patched.apk"
+        download_url = f"/repo/files/{package}/{card_version}/{package}_{card_version}_patched.apk"
         apk_name = f"{package}_{card_version}_patched.apk"
     elif candidate_results:
         for _, cver, _ in candidate_results:
             capk = PATCHED_DIR / package / cver / f"{package}_{cver}_patched.apk"
             if capk.is_file():
-                download_url = f"/files/{package}/{cver}/{package}_{cver}_patched.apk"
+                download_url = f"/repo/files/{package}/{cver}/{package}_{cver}_patched.apk"
                 apk_name = f"{package}_{cver}_patched.apk"
                 break
 

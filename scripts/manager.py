@@ -118,8 +118,10 @@ class Patched:
             patched_package_name = package_name
             patched_version_code = version_code
 
+        clean_base = self.base_url.rstrip("/")
+        repo_base = clean_base if clean_base.endswith("/repo") else f"{clean_base}/repo"
         relative_path = details['output_dest'].as_posix().split('/patched/', 1)[-1]
-        url = f"{self.base_url}/files/{relative_path}"
+        url = f"{repo_base}/files/{relative_path}"
 
         morphe = re.search(r"(\d+\.\d+\.\d+)", self.morphe_location.resolve().name) 
         morphe_version = morphe.group(1) if morphe else "Unknown"
@@ -286,6 +288,8 @@ class Obtanium:
         self.base_url = base_url
 
     def add_package(self):
+        clean_base = self.base_url.rstrip("/")
+        repo_base = clean_base if clean_base.endswith("/repo") else f"{clean_base}/repo"
         ob_export = {'schemaVersion': 2, 'apps': []}
 
         for package_name, details in self.patched_results.items():
@@ -298,14 +302,16 @@ class Obtanium:
             patched_package_name = latest_details['package'].get('patched_package_name', package_name)
             additional_settings = {'appIdOrName': patched_package_name, 'versionExtractionRegEx': r'\d+(\.\d+)+'}
             relative_url = urlparse(latest_details['file']['url']).path.lstrip("/")
-            apk_url = f"{self.base_url}/{relative_url}"
+            if relative_url.startswith("repo/"):
+                relative_url = relative_url[len("repo/"):]
+            apk_url = f"{repo_base}/{relative_url}"
             apk_list = [[latest_details['file']['file_name'], apk_url]]
 
             app = {
                 'id': patched_package_name,
                 'name': latest_details['package'].get('clean_name', package_name),
                 'author': 'AutoMorph',
-                'url': f"{self.base_url}?appId={patched_package_name}",
+                'url': f"{repo_base}?appId={patched_package_name}",
                 'latestVersion': latest_version,
                 'preferredApkIndex': 0,
                 'overrideSource': 'FDroidRepo',
@@ -325,6 +331,9 @@ class FDroid:
         self.existing_index = indexv2 or {}
 
     def add_package(self):
+        clean_base = self.base_url.rstrip("/")
+        repo_address = clean_base if clean_base.endswith("/repo") else f"{clean_base}/repo"
+        
         index = {
             'repo': {
                 'name': {
@@ -333,7 +342,7 @@ class FDroid:
                 'description': {
                     'en-US': "Custom Patched Android Applications Using AutoMorph and Morphe Desktop"
                     },
-                'address': self.base_url,
+                'address': repo_address,
                 'timestamp': self.time
             },
             'packages': {},
@@ -376,10 +385,14 @@ class FDroid:
                             }
                         }
 
+                file_path = urlparse(v_details['file']['url']).path.lstrip("/")
+                if file_path.startswith("repo/"):
+                    file_path = file_path[len("repo/"):]
+
                 index['packages'][patched_package_name]['versions'][f"v{version.replace('.', '_')}"] = {
                     'added': time,
                     'file': {
-                        'name': urlparse(v_details['file']['url']).path.lstrip("/"),
+                        'name': file_path,
                         'sha256': v_details['file'].get('sha256'),
                         'size': v_details['file'].get('size_bytes')
                     },
@@ -464,6 +477,8 @@ def remake_patched(project_root: Path, base_url: str, patched_json: Path, patche
             time_ms = rec.get("patchedAt") or int(apk_path.stat().st_mtime * 1000)
             time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time_ms / 1000))
             
+            clean_base = base_url.rstrip("/")
+            repo_base = clean_base if clean_base.endswith("/repo") else f"{clean_base}/repo"
             rel_path = apk_path.as_posix().split("/patched/", 1)[-1]
 
             patched_data.setdefault(pkg, {})[ver] = {
@@ -483,7 +498,7 @@ def remake_patched(project_root: Path, base_url: str, patched_json: Path, patche
                 "file": {
                     "file_name": apk_path.name,
                     "location": str(apk_path),
-                    "url": f"{base_url}/files/{rel_path}",
+                    "url": f"{repo_base}/files/{rel_path}",
                     "size_bytes": size_bytes,
                     "file_size": size_str,
                     "sha256": rec.get("outputApkSha256", ""),
