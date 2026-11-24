@@ -157,7 +157,8 @@ class Patched:
                 'repos': list(details['repos']),
                 'strat': details['strat'],
                 'attempt': details['attempt'],
-                'morphe_desktop_version': morphe_version
+                'morphe_desktop_version': morphe_version,
+                'built_with': details.get('fingerprint')
             }
         }
         

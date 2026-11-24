@@ -13,6 +13,48 @@ from zipfile import ZipFile
 
 logger = logging.getLogger(__name__)
 
+
+def highest_compatible_version(section: str) -> tuple[tuple[int, ...], str]:
+    """Highest version listed under "Compatible versions:" in one package section of
+    `list-patches --with-versions` output.
+
+    Bundles do not list versions newest-first (e.g. crimera/piko-newx lists
+    12.38.1-prod.01 before 12.41.0-prod.01), so taking the first line targets an older
+    version than the patches support. Experimental versions are not in the listing
+    (no `-x`), so the highest one is the newest supported version.
+
+    The list is read by indentation, not up to the next ":", because some versions
+    contain a colon (wchill/patcheddit: v23.06.30-13:39). A version code suffix
+    ("<version>: ARM64_V8A=...") is ignored here.
+    """
+    versions = []
+    indent = None
+
+    for line in section.splitlines():
+        if indent is None:
+            if "Compatible versions:" in line:
+                indent = len(line) - len(line.lstrip())
+                same_line = line.split("Compatible versions:", 1)[1].strip()
+                if same_line:
+                    versions.append(same_line)
+            continue
+
+        entry = line.strip()
+        if not entry or len(line) - len(line.lstrip()) <= indent:
+            break
+        versions.append(entry)
+
+    best = None
+    for entry in versions:
+        with_codes = re.match(r"^(.+?):\s+[A-Z0-9_]+=\d+", entry)
+        if with_codes:
+            entry = with_codes.group(1).strip()
+        key = tuple(int(d) for d in re.findall(r"\d+", entry))
+        if key and (best is None or key > best[0]):
+            best = (key, entry)
+
+    return best or ((0, 0, 0), "0.0.0")
+
 class Morphe:
 
     def __init__(self, project_root: Path, original_dir: Path, patched_dir: Path, detailed_app_list: dict[str, dict], repo_details: dict[str, dict], low_spec_mode: bool, force: bool, base_url: str) -> None:
@@ -30,6 +72,7 @@ class Morphe:
         self.morphe_location = project_root / "tools" / "morphe.jar"
         
         self.repo_versions_json = self.state_dir / "repo_versions.json"
+        self.current_repo_versions = {}
         self.options_checksum_json = self.state_dir / "options_checksum.json"
 
         self.repo_search: dict[str, set[str]] = {}
@@ -73,6 +116,7 @@ class Morphe:
 
     def scan_updates(self) -> dict[str, set[str]]:
         new_repo_versions = self.find_repo_version()
+        self.current_repo_versions = new_repo_versions or {}
         updated_repos = self.check_repo_update(new_repo_versions)
 
         if updated_repos:
@@ -303,6 +347,37 @@ class Morphe:
 
         except OSError as e:
             logger.error(f" └── [!] Failed to write {self.repo_versions_json.name}: {e}")
+
+    def build_fingerprint(self, package_name: str) -> dict | None:
+        """What an app's patched APK is built from: the version of each of its patch
+        bundles and a checksum of its current patch selection and options.
+
+        Stored with every build in patched.json ('patch' -> 'built_with'), so that a new
+        bundle release or an edited options file can trigger a rebuild of a version that
+        is already patched. Returns None when a bundle version is unknown (e.g. the
+        release lookup failed), so a lookup error never looks like a change.
+        """
+        try:
+            cached = {}
+            if self.repo_versions_json.is_file():
+                with open(self.repo_versions_json, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+
+            bundles = {}
+            for repo in self.detailed_patch_list.get(package_name, {}).get('repos', []):
+                version = self.current_repo_versions.get(repo) or cached.get(repo)
+                if not version:
+                    return None
+                bundles[repo] = ".".join(str(v) for v in version)
+
+            app_options = sorted((self.options_dir / package_name).glob('*_options.json'))
+            checksums = self.generate_checksum(app_options)
+            options = hashlib.sha256(json.dumps(checksums, sort_keys=True).encode("utf-8")).hexdigest()
+
+            return {'bundles': bundles, 'options': options}
+        except Exception as e:
+            logger.warning(f" └── [!] Could not compute build fingerprint for {package_name}: {e}")
+            return None
 
     def check_repo(self, repo: str | None = None) -> set[str]:
         app_set = set()
@@ -623,11 +698,7 @@ class Morphe:
                         for section in package_sections:
                             pkg = section.split()[0]
 
-                            version_search = re.search(r"Compatible versions:\s*(.+)", section)
-                            first_ver_line = version_search.group(1).strip().splitlines()[0] if version_search else ""
-                            version_digits = re.findall(r"\d+", first_ver_line)
-                            tup_ver = tuple(int(d) for d in version_digits) if version_digits else (0, 0, 0)
-                            ver_str = first_ver_line.strip() if version_digits else "0.0.0"
+                            tup_ver, ver_str = highest_compatible_version(section)
 
                             abi_version_codes = {}
                             vcs = re.search(rf"^\s*{re.escape(ver_str)}:\s*(.+)$", section, re.MULTILINE)
