@@ -4,6 +4,7 @@ import re
 import requests
 import hashlib
 import subprocess
+import tempfile
 import urllib.parse
 from pathlib import Path
 import logging
@@ -800,14 +801,17 @@ class Morphe:
         if strat == 1:
             cmd += ["--force"]
 
-        cmd += ["--out", str(output), str(input_package)]
+        temp_dir = tempfile.TemporaryDirectory(dir=output.parent)
+        candidate = Path(temp_dir.name) / output.name
+        cmd += ["--out", str(candidate), str(input_package)]
 
         try:
             logger.info(f"[*] Attempting to patch package: {package_name}, version: {version_name}...")
             logger.debug(f"Patch command:\n{cmd}\n")
             subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-            if output.is_file():
+            if candidate.is_file():
+                candidate.replace(output)
                 now = datetime.now()
                 timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
                 time_ms = int(now.timestamp() * 1000)
@@ -842,3 +846,5 @@ class Morphe:
         except KeyboardInterrupt:
             logger.critical("\n └── [!] Patch process cancelled by user.")
             raise
+        finally:
+            temp_dir.cleanup()
