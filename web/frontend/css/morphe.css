@@ -1316,8 +1316,15 @@ a.drawer-patch-owner-chip:hover,
   flex-wrap: wrap;
 }
 
+.app-card-footer > .btn-patch-now,
+.card-actions-group > .btn {
+  flex-grow: 1;
+  justify-content: center;
+}
+
 .card-actions-group {
   display: flex;
+  flex-grow: 1;
   gap: 6px;
 }
 
