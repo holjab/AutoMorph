@@ -31,6 +31,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("automorph.api")
 
 app = FastAPI(title="AutoMorph Management API", version="2.1.0")
+delivery_app = FastAPI(
+    title="AutoMorph Delivery",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 # Enable gzip compression for responses >= 1000 bytes (e.g. 3.6MB catalog -> ~250KB)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -909,14 +915,7 @@ async def serve_patched_files(request: Request, subpath: str = "") -> Response:
     - Files: Serves APKs as downloadable attachments and JSON files inline for viewing
       (or attachment if ?download=1).
     """
-    patched_root = (PROJECT_ROOT / "apps" / "patched").resolve()
-    target_path = (patched_root / subpath.strip("/")).resolve()
-
-    # Security check: directory traversal protection
-    try:
-        target_path.relative_to(patched_root)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    patched_root, target_path = _resolve_patched_path(subpath)
 
     if not target_path.exists():
         raise HTTPException(status_code=404, detail="File or folder not found")
@@ -925,11 +924,7 @@ async def serve_patched_files(request: Request, subpath: str = "") -> Response:
         is_download = request.query_params.get("download") in ("1", "true", "yes")
 
         if target_path.suffix.lower() == ".apk":
-            return FileResponse(
-                target_path,
-                filename=target_path.name,
-                media_type="application/vnd.android.package-archive",
-            )
+            return _apk_download(target_path)
         elif target_path.suffix.lower() == ".json":
             if is_download:
                 return FileResponse(
@@ -954,6 +949,26 @@ async def serve_patched_files(request: Request, subpath: str = "") -> Response:
 
     redirect_target = f"/#/files/{rel_path}" if rel_path else "/#/files"
     return RedirectResponse(url=redirect_target, status_code=status.HTTP_302_FOUND)
+
+
+def _resolve_patched_path(subpath: str) -> tuple[Path, Path]:
+    patched_root = (PROJECT_ROOT / "apps" / "patched").resolve()
+    target = (patched_root / subpath.strip("/")).resolve()
+    if not target.is_relative_to(patched_root):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return patched_root, target
+
+
+def _apk_download(path: Path) -> FileResponse:
+    return FileResponse(path, filename=path.name, media_type="application/vnd.android.package-archive")
+
+
+@delivery_app.api_route("/files/{subpath:path}", methods=["GET", "HEAD"])
+async def serve_delivery_apk(subpath: str) -> FileResponse:
+    _, target = _resolve_patched_path(subpath)
+    if target.suffix.lower() != ".apk" or not target.is_file():
+        raise HTTPException(status_code=404, detail="APK not found")
+    return _apk_download(target)
 
 
 # ---------------------------------------------------------------------------
@@ -1027,6 +1042,9 @@ def _ensure_obtainium_files(base_url: str) -> tuple[Path, Path]:
 @app.get("/index-v2.json")
 @app.get("/repo/index-v2.json")
 @app.get("/fdroid/repo/index-v2.json")
+@delivery_app.get("/index-v2.json")
+@delivery_app.get("/repo/index-v2.json")
+@delivery_app.get("/fdroid/repo/index-v2.json")
 async def serve_fdroid_index(request: Request):
     """
     Serves the F-Droid v2 repository index for Obtainium and F-Droid clients.
@@ -1040,6 +1058,7 @@ async def serve_fdroid_index(request: Request):
 
 @app.get("/automorph-obtainium.json")
 @app.get("/api/obtainium/download")
+@delivery_app.get("/automorph-obtainium.json")
 async def download_obtainium_export(request: Request):
     """
     Directly downloads the Obtainium import configuration file (automorph-obtainium.json).
@@ -1056,42 +1075,60 @@ async def download_obtainium_export(request: Request):
     raise HTTPException(status_code=404, detail="Obtainium export file not found. No apps patched yet.")
 
 
-@app.get("/api/obtainium/export")
-async def get_obtainium_export(request: Request):
-    """
-    Returns the Obtainium export schema as JSON for dashboard consumption and deep link generation.
-    """
+def _load_obtainium_export(request: Request, package: str | None = None) -> dict:
     base_url = _get_base_url(request)
+    if package is not None:
+        # The state is keyed by the configured package, even when a patch changes its Android ID.
+        patched_json = PROJECT_ROOT / "tools" / "automorph-data" / "state" / "patched.json"
+        try:
+            with patched_json.open(encoding="utf-8") as f:
+                versions = json.load(f).get(package)
+            if versions:
+                scripts_dir = str(PROJECT_ROOT / "scripts")
+                if scripts_dir not in sys.path:
+                    sys.path.insert(0, scripts_dir)
+                import manager
+                return manager.Obtanium(base_url, {package: versions}).add_package()
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.error("Error building package Obtainium export: %s", e)
+            raise HTTPException(status_code=500, detail="Failed to build Obtainium export data") from e
+        raise HTTPException(status_code=404, detail="No patched release available for this package")
+
     export_file, _ = _ensure_obtainium_files(base_url)
     if export_file.is_file():
         try:
             with open(export_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return JSONResponse(data)
+                return json.load(f)
         except Exception as e:
             logger.error(f"Error reading obtainium-export.json: {e}")
             raise HTTPException(status_code=500, detail="Failed to read Obtainium export data")
-    return JSONResponse({"schemaVersion": 2, "apps": []})
+    return {"schemaVersion": 2, "apps": []}
+
+
+@app.get("/api/obtainium/export")
+async def get_obtainium_export(request: Request, package: str | None = None):
+    """Return the Obtainium export for the dashboard and mobile deep links."""
+    return JSONResponse(_load_obtainium_export(request, package))
 
 
 @app.get("/api/obtainium/open")
-async def open_obtainium_redirect(request: Request):
+@delivery_app.get("/api/obtainium/open")
+async def open_obtainium_redirect(request: Request, package: str | None = None):
     """
     Web redirect helper for QR code scans that triggers the obtainium:// intent on mobile.
     """
-    base_url = _get_base_url(request)
-    export_file, _ = _ensure_obtainium_files(base_url)
-    apps = []
-    if export_file.is_file():
-        try:
-            with open(export_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                apps = data.get("apps", [])
-        except Exception:
-            pass
-
+    apps = _load_obtainium_export(request, package).get("apps", [])
     encoded_json = urllib.parse.quote(json.dumps(apps))
     deep_link = f"obtainium://apps/{encoded_json}"
+    scope = "this patched application" if package is not None else "your patched applications"
+    download_link = "" if package is not None else """
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);">
+      <a href="/automorph-obtainium.json" style="color: #9ca3af; font-size: 0.85rem; text-decoration: underline;">
+        Or download JSON file directly
+      </a>
+    </div>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1146,14 +1183,10 @@ async def open_obtainium_redirect(request: Request):
   <div class="card">
     <h2 style="margin: 0 0 12px; color: #20cfce;">Opening Obtainium...</h2>
     <p style="color: #9ca3af; margin: 0 0 20px; font-size: 0.95rem; line-height: 1.5;">
-      Importing your patched applications into Obtainium on your device.
+      Importing {scope} into Obtainium on your device.
     </p>
     <a href="{deep_link}" class="btn">Tap Here to Open Obtainium</a>
-    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);">
-      <a href="/automorph-obtainium.json" style="color: #9ca3af; font-size: 0.85rem; text-decoration: underline;">
-        Or download JSON file directly
-      </a>
-    </div>
+    {download_link}
   </div>
 </body>
 </html>"""

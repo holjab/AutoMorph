@@ -4,7 +4,17 @@
 
 # Remote Access & Tunnels Guide
 
-AutoMorph runs on port `8080` inside Docker. When hosting on a cloud VPS (such as [Oracle Free Tier](oracle-setup.md)) or on a home server behind NAT/CGNAT, exposing your instance securely without opening firewall ports or managing SSL certificates is best accomplished using a **Tunnel**.
+## Separate Dashboard and Delivery Ports
+
+One AutoMorph container runs both listeners. Docker Compose publishes the dashboard at `127.0.0.1:8080` and delivery at `127.0.0.1:8081` by default. The delivery listener serves APK downloads, F-Droid indexes, the Obtainium export, and Obtainium QR redirects.
+
+- **Existing tunnels and reverse proxies** must point their public route to delivery. Use `automorph:8081` from a Compose tunnel container or `127.0.0.1:8081` from the Docker host. If a public route uses `automorph:8080`, change its target before starting the updated container. Keep the same public URL so previously imported app feeds continue working.
+- **Direct LAN delivery** can use `DELIVERY_BIND_HOST=0.0.0.0` and `BASE_URL=http://<host-LAN-IP>:8081` in `.env`. Use a custom delivery URL in dashboard settings if another ingress is selected.
+- **Private remote dashboard access** can use SSH forwarding, for example `ssh -L 8080:127.0.0.1:8080 user@server`. Open `http://localhost:8080` on your computer.
+
+Set `DASHBOARD_PORT` and `DELIVERY_PORT` in `.env` to change the published host ports independently. Compose tunnel containers use the fixed internal delivery port `8081`.
+
+If you ran the earlier Compose example with a standalone `automorph-delivery` service, remove that container with `docker compose rm -sf automorph-delivery` while the old Compose file is still in place. Then switch to the updated Compose file.
 
 AutoMorph comes with built-in, first-class support for three tunnel providers. You can choose any one (or even combine multiple):
 
@@ -50,7 +60,7 @@ Pangolin provides quick reverse-proxy tunnels using Newt clients. You don't need
 1. Register for an account at [Pangolin](https://pangolin.net/) (or your self-hosted Pangolin instance).
 2. Create a new Site/Target in your Pangolin dashboard:
    * **Target Host**: `automorph`
-   * **Target Port**: `8080`
+   * **Target Port**: `8081`
    * **Protocol**: `HTTP`
 3. Generate or view your **Newt Client credentials**:
    * Note your **Endpoint**, **Newt ID**, and **Newt Secret**.
@@ -93,14 +103,14 @@ sudo tailscale up
 Follow the authentication link printed in the terminal to sign into your Tailscale account.
 
 ### 2.2 Enable Tailscale Funnel
-To expose port 8080 as a public HTTPS URL:
+To expose APK delivery through a public HTTPS URL:
 ```bash
-sudo tailscale funnel 8080
+sudo tailscale funnel 8081
 ```
 Tailscale will output your public address (e.g., `https://your-node.tailnet-xyz.ts.net`).
 
 > [!NOTE]
-> If you only want to access AutoMorph securely within your private Tailscale network (not publicly over the open internet), run `sudo tailscale serve 8080` instead of `funnel`.
+> For APK delivery within your private tailnet, run `sudo tailscale serve 8081`.
 
 ### 2.3 Configure `.env`
 Open your `.env` file:
@@ -136,7 +146,7 @@ Under the **Public Hostname** tab:
 * **Subdomain**: e.g., `patcher` (or leave blank for root domain)
 * **Domain**: select your registered domain (e.g., `yourdomain.com`)
 * **Type**: `HTTP`
-* **URL**: `automorph:8080` *(uses the Docker container service name)*
+* **URL**: `automorph:8081` *(uses the Docker Compose service name)*
 
 Click **Save hostname**.
 
@@ -187,15 +197,16 @@ However, mobile background updaters like **Obtainium** and **Neo Store** are aut
 
 To allow mobile app updates without compromising your server's security, use one of the strategies below:
 
-### 1. Path Bypass Rules (Recommended)
+### 1. Path Bypass Rules for an Authenticated Delivery Host
 
-Add a **Bypass** policy in your tunnel provider for only the two paths needed by your phone:
+If you require login on the delivery hostname, allow the paths your apps use through your tunnel provider:
 
 * **Paths to Bypass**:
   * `/files/*` (the APK downloads)
   * `/index-v2.json` (the repository index that tells your phone when an update is available)
-* **What stays protected**: Your root dashboard (`/`), admin APIs (`/api/*`), build triggers, settings, and live console remain 100% protected behind your SSO login screen.
-* **Is `/files/*` open to directory browsing?**: **No.** AutoMorph does not expose directory listings under `/files/*` (visiting any folder directly redirects into the dashboard). An outsider cannot see or browse what files exist unless they already know the exact package name, version, and APK filename.
+  * `/repo/index-v2.json` and `/fdroid/repo/index-v2.json` (alternate feed paths)
+  * `/api/obtainium/open` and `/automorph-obtainium.json` (QR scanning and manual import)
+* The delivery listener returns an error for requests to list directories. The repository index publishes APK URLs.
 
 ### 2. Extra Protection via Cloudflare WAF
 
@@ -212,7 +223,7 @@ If you use Cloudflare and want extra protection on the bypassed `/files/*` path 
 If you do not want any public internet exposure at all:
 * Use **Tailscale Serve** (private mesh) instead of a public tunnel or Funnel.
 * Install the Tailscale app on your phone and connect to your tailnet.
-* Your phone talks directly to AutoMorph's private node address (e.g. `http://automorph.tailnet.ts.net:8080`) over an encrypted WireGuard tunnel without needing any public bypasses or login screens.
+* Set the private Tailscale Serve URL as the delivery base URL so your phone can fetch updates over the tailnet.
 
 ---
 
@@ -225,7 +236,7 @@ If you want to customize or switch which address is used, you can do so in the w
 * **Multiple Tunnels**: If you run more than one tunnel simultaneously (such as both Cloudflare and Pangolin), you can choose which tunnel address is embedded into your Obtainium export and F-Droid repository feeds for downloads.
 * **Custom Outside URL**: If you host AutoMorph behind your own reverse proxy or port forward without an automated tunnel, select this option to enter your custom domain or LAN address.
 * **Configured Tunnels Only**: The dropdown automatically filters the list to only display tunnels that have active credentials or profiles in `.env`, keeping unconfigured options hidden.
-* **Local Testing**: You can select `localhost:8080` if you only want local testing on the host machine.
+* **Local Testing**: Select the local delivery URL, which defaults to `http://localhost:8081` with Compose.
 
 ---
 
@@ -250,16 +261,16 @@ The dropdown only includes tunnels that are actively configured in your `.env`. 
 <details>
 <summary><b>Why does Obtainium on my phone say connection refused or fail to download?</b></summary>
 
-If the server is using `localhost:8080`, external devices cannot reach it because `localhost` on a phone refers to the phone itself. Go to the AutoMorph web portal under **Settings** › **External URL / Access Mode**, select your active tunnel or custom URL, and save settings.
+If the feed uses `localhost`, the phone will try to connect to itself. In dashboard settings, select the tunnel or custom delivery URL that the phone can reach.
 </details>
 
 <details>
 <summary><b>The tunnel is connected, but the web page returns 502 Bad Gateway.</b></summary>
 
-A 502 indicates the tunnel container cannot reach `automorph:8080`.
-* Check if the main AutoMorph container is running: `docker compose ps`
-* Inspect AutoMorph logs: `docker compose logs -f automorph`
-* Ensure the target hostname in your tunnel config is `automorph` (the Docker service name) and port is `8080`.
+A 502 can indicate the tunnel cannot reach the delivery service.
+* Check the services with `docker compose ps`.
+* Inspect both listener logs with `docker compose logs -f automorph`.
+* Check that the tunnel points to `automorph:8081` from Compose or `127.0.0.1:8081` from the Docker host.
 </details>
 
 ---

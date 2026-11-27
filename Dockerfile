@@ -29,7 +29,8 @@ FROM python:3.12-alpine3.21
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    JAVA_HOME=/opt/java/runtime
+    JAVA_HOME=/opt/java/runtime \
+    BASE_URL_DELIVERY=http://localhost:8081
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 COPY --from=jre-build /rootfs/ /
@@ -41,6 +42,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8080
+EXPOSE 8080 8081
 
-CMD ["python", "-m", "uvicorn", "web.backend.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "web.backend.serve"]

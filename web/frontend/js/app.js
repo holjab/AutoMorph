@@ -1635,6 +1635,9 @@ function renderConfiguredApps() {
               <a href="${escapeHtml(lastRes.download_url)}" download="${escapeHtml(lastRes.apk_name || (pkg + '.apk'))}" class="btn btn-primary btn-sm" title="Direct download patched APK (v${escapeHtml(lastRes.version || '')})" onclick="event.stopPropagation()">
                 <span class="material-symbols-rounded" style="font-size: 16px;">download</span>
               </a>
+              <button type="button" class="btn btn-secondary btn-sm" data-package="${escapeHtml(pkg)}" onclick="openObtainiumModal(this.dataset.package)" title="Obtainium QR code" aria-label="Obtainium QR code for ${escapeHtml(pkg)}">
+                <span class="material-symbols-rounded" style="font-size: 16px;" aria-hidden="true">qr_code</span>
+              </button>
             ` : ''}
             <button onclick="navigateToPackageFiles('${pkg}')" class="btn btn-secondary btn-sm" title="Browse files for ${pkg}">
               <span class="material-symbols-rounded" style="font-size: 16px;">folder_open</span>
@@ -6034,6 +6037,7 @@ function closeResultViewerModal() {
 // ---------------------------------------------------------------------------
 
 let cachedObtainiumExport = null;
+let obtainiumRequest = null;
 
 async function openObtainiumModal(specificPackage = null) {
   const modal = document.getElementById('modal-obtainium');
@@ -6041,18 +6045,25 @@ async function openObtainiumModal(specificPackage = null) {
 
   modal.classList.add('open');
 
-  // Detect Android / Mobile
-  const isAndroid = /android/i.test(navigator.userAgent);
+  obtainiumRequest?.abort();
+  const request = new AbortController();
+  obtainiumRequest = request;
+
   const isMobile = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
-
   const mobileBox = document.getElementById('obtainium-mobile-box');
-  const desktopBox = document.getElementById('obtainium-desktop-box');
+  const directBtn = document.getElementById('btn-obtainium-direct-link');
+  const warnEl = document.getElementById('obtainium-localhost-warning');
+  const countEl = document.getElementById('obtainium-app-count-text');
+  const query = specificPackage ? '?' + new URLSearchParams({ package: specificPackage }) : '';
 
-  if (isAndroid || isMobile) {
-    if (mobileBox) mobileBox.classList.remove('hidden');
-  } else {
-    if (mobileBox) mobileBox.classList.add('hidden');
-  }
+  document.getElementById('obtainium-bulk-actions').classList.toggle('hidden', Boolean(specificPackage));
+  document.getElementById('obtainium-direct-label').textContent = specificPackage
+    ? 'Add This App to Obtainium'
+    : '1-Tap Add All to Obtainium';
+  mobileBox?.classList.add('hidden');
+  directBtn?.removeAttribute('href');
+  warnEl?.classList.add('hidden');
+  if (countEl) countEl.textContent = '';
 
   // Loading state in QR container
   const qrContainer = document.getElementById('obtainium-qr-container');
@@ -6061,21 +6072,16 @@ async function openObtainiumModal(specificPackage = null) {
   }
 
   try {
-    const res = await fetch('/api/obtainium/export');
+    const res = await fetch('/api/obtainium/export' + query, { signal: request.signal });
+    if (specificPackage && res.status === 404) {
+      throw new Error('No patched release available for this package');
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    cachedObtainiumExport = data;
+    if (request.signal.aborted) return;
+    if (!specificPackage) cachedObtainiumExport = data;
+    const appsToSync = data.apps || [];
 
-    let appsToSync = data.apps || [];
-    if (specificPackage) {
-      appsToSync = appsToSync.filter(a => a.id === specificPackage || a.name === specificPackage);
-      // Fallback if not in export yet
-      if (appsToSync.length === 0 && data.apps && data.apps.length > 0) {
-        appsToSync = data.apps;
-      }
-    }
-
-    const warnEl = document.getElementById('obtainium-localhost-warning');
     if (warnEl) {
       const isLocalhost = appsToSync.some(a => (a.url && (a.url.includes('localhost') || a.url.includes('127.0.0.1'))));
       if (isLocalhost) {
@@ -6086,7 +6092,6 @@ async function openObtainiumModal(specificPackage = null) {
     }
 
     // Update count text
-    const countEl = document.getElementById('obtainium-app-count-text');
     if (countEl) {
       if (specificPackage) {
         countEl.textContent = `Syncs package: ${specificPackage}`;
@@ -6096,24 +6101,18 @@ async function openObtainiumModal(specificPackage = null) {
       }
     }
 
-    // Build deep link URI:
-    // If 1 app: obtainium://app/{json}
-    // If >1 apps: obtainium://apps/[{...}]
-    let deepLinkUri = '';
-    if (appsToSync.length === 1) {
-      deepLinkUri = `obtainium://app/${encodeURIComponent(JSON.stringify(appsToSync[0]))}`;
-    } else {
-      deepLinkUri = `obtainium://apps/${encodeURIComponent(JSON.stringify(appsToSync))}`;
-    }
-
-    // Direct link button
-    const directBtn = document.getElementById('btn-obtainium-direct-link');
+    // Use the same import payload as the QR redirect.
     if (directBtn) {
-      directBtn.href = deepLinkUri;
+      directBtn.href = `obtainium://apps/${encodeURIComponent(JSON.stringify(appsToSync))}`;
     }
+    if (isMobile) mobileBox?.classList.remove('hidden');
 
-    // QR Code URL: Redirect through /api/obtainium/open for seamless mobile scanner launch
-    const qrUrl = window.location.origin + '/api/obtainium/open';
+    // Use the delivery address advertised by the feed so phones can scan from a private dashboard.
+    const deliveryUrl = new URL(appsToSync[0]?.url || window.location.origin);
+    deliveryUrl.pathname = deliveryUrl.pathname.replace(/\/+$/, '') + '/api/obtainium/open';
+    deliveryUrl.search = query;
+    deliveryUrl.hash = '';
+    const qrUrl = deliveryUrl.href;
 
     if (qrContainer) {
       qrContainer.innerHTML = '';
@@ -6141,20 +6140,26 @@ async function openObtainiumModal(specificPackage = null) {
           }
         }, 50);
       } else {
-        qrContainer.innerHTML = `<a href="${qrUrl}" target="_blank" style="font-size: 0.8rem; color: #000; text-align: center; word-break: break-all;">Open Sync Link</a>`;
+        const link = document.createElement('a');
+        link.href = qrUrl;
+        link.textContent = 'Open Sync Link';
+        link.style.color = '#000';
+        qrContainer.append(link);
       }
     }
 
   } catch (err) {
+    if (request.signal.aborted) return;
     console.error('Failed to load Obtainium export data:', err);
     if (qrContainer) {
-      qrContainer.innerHTML = '<span style="color: #ef4444; font-size: 0.8125rem;">No patched apps found yet</span>';
+      qrContainer.textContent = 'QR code unavailable';
     }
     showToast('Failed to load Obtainium sync data: ' + err.message, 'error');
   }
 }
 
 function closeObtainiumModal() {
+  obtainiumRequest?.abort();
   document.getElementById('modal-obtainium')?.classList.remove('open');
 }
 

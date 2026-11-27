@@ -4,10 +4,12 @@ services:
     container_name: automorph
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${DASHBOARD_BIND_HOST:-127.0.0.1}:${DASHBOARD_PORT:-8080}:8080"
+      - "${DELIVERY_BIND_HOST:-127.0.0.1}:${DELIVERY_PORT:-8081}:8081"
     environment:
       - TAILSCALE_FUNNEL_URL=${TAILSCALE_FUNNEL_URL:-}
       - BASE_URL=${BASE_URL:-}
+      - BASE_URL_DELIVERY=http://localhost:${DELIVERY_PORT:-8081}
       - PROXY_URL=${PROXY_URL:-${PROXY:-}}
       - BYPASS_PROXY=${BYPASS_PROXY:-${NO_PROXY:-}}
       - FLARESOLVERR_URL=${FLARESOLVERR_URL:-}

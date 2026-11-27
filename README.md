@@ -50,7 +50,7 @@ For full step-by-step guides, visit our **[Documentation Hub](docs/README.md)**:
    docker compose up -d
    ```
 
-4. Open your web portal via your configured tunnel or local URL (`http://localhost:8080`). For detailed configuration, see the [User Guide](docs/user-guide.md).
+5. Open the dashboard at `http://localhost:8080` on the Docker host. Point public tunnels at AutoMorph's delivery listener on port `8081` for APK downloads and app updates. See the [Remote Access & Tunnels Guide](docs/tunnels.md#separate-dashboard-and-delivery-ports).
 
 ## A Note on AI
 

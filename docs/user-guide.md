@@ -149,7 +149,7 @@ Access the **Settings** tab in the top navigation bar to fine-tune your environm
 * **When to adjust this**:
   * If you run multiple tunnels simultaneously (e.g. both Cloudflare and Pangolin) and want to choose which one your phone uses for downloads.
   * If you do not use an automated tunnel and want to enter your own custom domain or LAN IP.
-  * If you want to use local mode (`localhost:8080`) for local testing.
+  * If you want to use the local delivery address (`http://localhost:8081` with Docker Compose).
 * **The Options Dropdown**:
   * Only lists tunnels that are actively configured in `.env` (unconfigured tunnels are omitted).
   * Choose **Custom Outside URL** to enter a manual domain or LAN IP.
@@ -278,7 +278,9 @@ sequenceDiagram
 
 ### 9.2 1-Tap Import via Obtainium (QR Code & Deep Link)
 
-If you'd like to import all your patched apps into Obtainium at once:
+To import one patched app, click the **Obtainium QR code** icon beside its APK download on the package card. Scan the code or tap **Add This App to Obtainium** on your phone.
+
+To import all your patched apps at once:
 
 1. Click the **Obtainium Sync** button in the top navigation or on the dashboard.
 2. Choose how to connect:
@@ -287,11 +289,11 @@ If you'd like to import all your patched apps into Obtainium at once:
    * **Manual JSON File Import**: Click **Download JSON File** to save `automorph-obtainium.json` and import it in Obtainium via **Settings** › **Import / Export** › **Import** › **From JSON file**.
 
 > [!TIP]
-> If your server is running on `localhost:8080` without any tunnel configured, mobile devices won't be able to reach download links. Simply select your tunnel or LAN URL under **Settings** › **External URL / Access Mode**.
+> Select a delivery address your phone can reach under **Settings** › **External URL / Access Mode**. See [Separate Dashboard and Delivery Ports](tunnels.md#separate-dashboard-and-delivery-ports) for tunnel and LAN setup.
 
 > [!IMPORTANT]
 > **Using Cloudflare Zero Trust or Pangolin SSO?**
-> If your AutoMorph instance is protected behind a login screen, mobile background updaters cannot solve the login prompt and will fail to download. You must add a **Bypass Rule** for `/files/*` and `/index-v2.json` in your tunnel provider. See the [Remote Access & Tunnels Guide](tunnels.md#tunnel-authentication--mobile-apps-cloudflare-access--pangolin-sso) for instructions.
+> If the delivery hostname requires a login, add bypass rules for the delivery paths used by mobile clients. See the [Remote Access & Tunnels Guide](tunnels.md#tunnel-authentication--mobile-apps-cloudflare-access--pangolin-sso).
 
 ### 9.3 Adding AutoMorph as an F-Droid Repository (Obtainium & Neo Store)
 

@@ -184,7 +184,7 @@ def get_all_ingress_endpoints(config: dict | None = None) -> list[dict[str, str]
         "icon": "⚡",
         "color": "#4A7FC8",
         "border_color": "#3b69a6",
-        "base_url": "http://localhost:8080",
+        "base_url": normalize_base_url(os.getenv("BASE_URL_DELIVERY")) or "http://localhost:8080",
     })
 
     return endpoints
