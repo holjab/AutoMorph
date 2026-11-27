@@ -38,7 +38,12 @@ COPY --from=jre-build /rootfs/ /
 WORKDIR /automorph
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+RUN apk add --no-cache libxml2 libxslt && \
+    apk add --no-cache --virtual .python-build-deps build-base libxml2-dev libxslt-dev && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apk del .python-build-deps && \
+    python -c "from lxml import etree"
 
 COPY . .
 
