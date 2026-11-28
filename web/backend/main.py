@@ -963,12 +963,16 @@ def _apk_download(path: Path) -> FileResponse:
     return FileResponse(path, filename=path.name, media_type="application/vnd.android.package-archive")
 
 
-@delivery_app.api_route("/files/{subpath:path}", methods=["GET", "HEAD"])
-async def serve_delivery_apk(subpath: str) -> FileResponse:
+def _resolve_delivery_apk(subpath: str) -> Path:
     _, target = _resolve_patched_path(subpath)
     if target.suffix.lower() != ".apk" or not target.is_file():
         raise HTTPException(status_code=404, detail="APK not found")
-    return _apk_download(target)
+    return target
+
+
+@delivery_app.api_route("/files/{subpath:path}", methods=["GET", "HEAD"])
+async def serve_delivery_apk(subpath: str) -> FileResponse:
+    return _apk_download(_resolve_delivery_apk(subpath))
 
 
 # ---------------------------------------------------------------------------
@@ -1063,48 +1067,45 @@ async def download_obtainium_export(request: Request):
     """
     Directly downloads the Obtainium import configuration file (automorph-obtainium.json).
     """
-    base_url = _get_base_url(request)
-    export_file, _ = _ensure_obtainium_files(base_url)
-    if export_file.is_file():
-        return FileResponse(
-            export_file,
-            filename="automorph-obtainium.json",
-            media_type="application/json",
-            headers={"Content-Disposition": 'attachment; filename="automorph-obtainium.json"'}
-        )
-    raise HTTPException(status_code=404, detail="Obtainium export file not found. No apps patched yet.")
+    return JSONResponse(
+        _load_obtainium_export(request),
+        headers={
+            "Content-Disposition": 'attachment; filename="automorph-obtainium.json"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _load_obtainium_export(request: Request, package: str | None = None) -> dict:
-    base_url = _get_base_url(request)
+    configured_packages = config_manager.get_configured_packages()
     if package is not None:
-        # The state is keyed by the configured package, even when a patch changes its Android ID.
-        patched_json = PROJECT_ROOT / "tools" / "automorph-data" / "state" / "patched.json"
-        try:
-            with patched_json.open(encoding="utf-8") as f:
-                versions = json.load(f).get(package)
-            if versions:
-                scripts_dir = str(PROJECT_ROOT / "scripts")
-                if scripts_dir not in sys.path:
-                    sys.path.insert(0, scripts_dir)
-                import manager
-                return manager.Obtanium(base_url, {package: versions}).add_package()
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            logger.error("Error building package Obtainium export: %s", e)
-            raise HTTPException(status_code=500, detail="Failed to build Obtainium export data") from e
+        configured_packages.intersection_update({package})
+
+    # Match config entries against the registry keys, which retain the original IDs.
+    deliverable = {}
+    for name, versions in config_manager.load_patched_registry().items():
+        if name not in configured_packages or not versions:
+            continue
+        available_versions = {}
+        for version, details in versions.items():
+            path = urllib.parse.urlparse(details.get("file", {}).get("url", "")).path
+            _, separator, subpath = path.partition("/files/")
+            if not separator:
+                continue
+            try:
+                _resolve_delivery_apk(urllib.parse.unquote(subpath))
+            except HTTPException:
+                continue
+            available_versions[version] = details
+        if available_versions:
+            deliverable[name] = available_versions
+
+    if package is not None and not deliverable:
         raise HTTPException(status_code=404, detail="No patched release available for this package")
 
-    export_file, _ = _ensure_obtainium_files(base_url)
-    if export_file.is_file():
-        try:
-            with open(export_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Error reading obtainium-export.json: {e}")
-            raise HTTPException(status_code=500, detail="Failed to read Obtainium export data")
-    return {"schemaVersion": 2, "apps": []}
+    import manager
+
+    return manager.Obtanium(_get_base_url(request), deliverable).add_package()
 
 
 @app.get("/api/obtainium/export")
@@ -1190,7 +1191,7 @@ async def open_obtainium_redirect(request: Request, package: str | None = None):
   </div>
 </body>
 </html>"""
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
 
 
 # ---------------------------------------------------------------------------

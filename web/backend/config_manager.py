@@ -761,6 +761,16 @@ def _find_apps_blocks(lines: list[str]) -> tuple[int, int, list[dict[str, Any]]]
     return apps_start_idx, apps_end_idx, blocks
 
 
+def get_configured_packages() -> set[str]:
+    """Return packages still listed in the dashboard, including disabled ones."""
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as f:
+            _, _, blocks = _find_apps_blocks(f.readlines())
+    except FileNotFoundError:
+        return set()
+    return {block["package"].strip("'\"") for block in blocks}
+
+
 def get_apps_list() -> list[dict[str, Any]]:
     """
     Returns all configured apps/packages from config.yaml in order of appearance,
